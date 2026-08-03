@@ -23,6 +23,13 @@
 4. 设备下载图片数据（原始 RGB 或预量化格式），在本地拼出 E Ink 帧缓冲，通过 SPI 刷到屏幕。
 5. 设备周期性上报状态（电量、当前显示内容、固件版本），服务端据此安排 OTA。
 
+## 数据源与部署现状
+
+- **照片数据源**：群晖 NAS 经 rsync over SSH 增量同步到本机 `services/photos`
+  （NAS 掉线不影响本地分析/每日精选），细节见 `docs/nas.md`
+- **部署**：macOS launchd 服务（`com.framedphoto.service`，开机自启 + KeepAlive），
+  监听 `0.0.0.0:8010`，详见 `docs/development.md`
+
 ## 关键设计决策
 
 - **转换放服务端**：E Ink 6 色量化 + 抖动算法复杂且迭代频繁，放服务端可免去设备端固件升级成本；设备端只做「格式解析 + 直接写显存」。

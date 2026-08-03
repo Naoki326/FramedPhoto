@@ -32,6 +32,9 @@ VLM_PROXY=http://127.0.0.1:7897  # OpenAI 模型有区域限制，需代理出�
 # VLM_PROVIDER=disabled
 ```
 
+> 视觉模型选型经验：**deepseek / glm / qwen3.7-max 不支持视觉输入**，
+> 不能用；OpenCode Go 上 **qwen3.8-max、minimax-m3** 是验证可用的视觉备选。
+
 `VLM_API_MODE`：`chat`（chat/completions）或 `responses`（/v1/responses）。
 GPT-5.x 等新模型仅支持 responses；URL 填 base（`.../v1`）或完整
 chat/completions 路径均可，客户端会自动规范。
@@ -49,7 +52,7 @@ python tools/analyze_photos.py /path/to/photos [-j 4]
 存入 SQLite `photo_scores` 表。VLM 不可用时自动降级启发式评分（清晰度、色彩、
 亮度），保证离线可跑。
 
-## 2. 每日精选（自动）
+## 3. 每日精选（自动）
 
 服务端按"今天月-日"匹配历年同一天的照片（须有真实 EXIF 拍摄时间），
 回忆度 ≥ 阈值（`DAILY_MIN_SCORE`），加权随机选一张（近期用过的降权防重复），
@@ -59,14 +62,14 @@ python tools/analyze_photos.py /path/to/photos [-j 4]
 - 输出 `services/daily/daily.fps6`，设备直接拉取显示
 - 无历史上的今天候选时，降级为全局高分未用照片
 
-## 3. 内容优先级
+## 4. 内容优先级
 
 设备轮询 `GET /api/images/content`：
 
 1. **手动上传**的最新图片（用户主动上传 = 想看的）
 2. 无手动内容时 → **每日精选**
 
-## 4. 设备端行为
+## 5. 设备端行为
 
 - 每次显示后**深度休眠**（`idf.py menuconfig` → `FRAMEDPHOTO_DEEP_SLEEP_HOURS`，
   默认 24h，0 = 禁用调试）

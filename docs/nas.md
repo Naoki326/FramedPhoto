@@ -42,9 +42,26 @@ PHOTO_LIB_DIR=./photos
 ./scripts/sync_nas.sh --delete
 ```
 
-> IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。
-> 建议配置 SSH 免密（`ssh-copy-id`）后，把同步加入定时任务：
-> `crontab -e` → `0 3 * * * cd <repo> && ./scripts/sync_nas.sh >> /tmp/sync_nas.log 2>&1`
+### 同步实现细节（踩过的坑，勿回退）
+
+- **macOS 自带 openrsync 与群晖 rsync 协议不兼容**，脚本会优先使用 brew 官方 rsync
+  （`/opt/homebrew/bin/rsync`，当前 3.4.4）；两个候选都找不到才退回系统 rsync。
+- **群晖相片目录 POSIX 权限为 000**（SMB 共享权限模式下），脚本用
+  `--chmod=Du+rwx,Dg+rx,Fu+rw,Fgo+r` 修复，否则本地文件不可读。
+- **默认排除**：`@eaDir` / `#recycle` / `.DS_Store` / `Thumbs.db`，以及视频
+  （mp4/mov/avi/mkv）和压缩包（zip/rar/7z/tar）——相框只需要静态图片。
+- **`sync_nas.sh` 的 `set -e` 陷阱**：列文件清单阶段日志无 `%`，进度循环里 grep
+  非零会误杀脚本导致 rsync 变孤儿——进度循环与 wait 期间必须关闭 errexit，
+  rsync 退出码由变量显式捕获。此修复勿回退。
+- 进度写入 `services/sync_status.json`（约每 5 秒一次），Web 管理台
+  「NAS 照片同步」板块展示；日志见 `docs/development.md`「运行中的服务」。
+  状态文件路径由服务端 `__file__` 上溯三层计算，**勿改动该路径约定**。
+- IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。
+- 建议配置 SSH 免密（`ssh-copy-id`）后，把同步加入定时任务：
+  `crontab -e` → `0 3 * * * cd <repo> && ./scripts/sync_nas.sh >> /tmp/sync_nas.log 2>&1`
+
+> ⚠️ 若首次全量同步已在后台进行，不要并发再跑一个 `sync_nas.sh`（rsync 无锁）；
+> 等状态文件变为 `done` 或先 `./scripts/sync_nas.sh --help` 查看互斥选项。
 
 ### 流量说明
 
