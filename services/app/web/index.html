@@ -39,6 +39,11 @@
 <header><h1>🖼 FramedPhoto 管理台</h1><span id="health" style="font-size:13px;opacity:.8">…</span></header>
 <main>
   <section>
+    <h2>NAS 照片同步</h2>
+    <div id="syncbox"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section>
     <h2>上传图片</h2>
     <div class="upload-row">
       <input type="file" id="file" accept="image/*" multiple>
@@ -143,6 +148,32 @@ async function loadScores() {
     </tr>`).join('');
   } catch (_) { tbody.innerHTML = '<tr><td colspan="6" class="empty">—</td></tr>'; }
 }
+async function loadSync() {
+  const box = $('syncbox');
+  try {
+    const r = await fetch('/api/sync/status');
+    const s = await r.json();
+    const fmt = b => b >= 1024**3 ? (b/1024**3).toFixed(2)+' GB' : (b/1024**2).toFixed(0)+' MB';
+    const pct = s.percent ?? 0;
+    const states = { running:'同步中', done:'已完成', error:'失败', stale:'进程失联', idle:'未运行' };
+    const color = { running:'#2563eb', done:'#16a34a', error:'#dc2626', stale:'#d97706', idle:'#9ca3af' };
+    box.innerHTML = `
+      <div style="font-size:13px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <b>${states[s.status] || s.status}</b>
+          <span>${s.total_bytes ? fmt(s.transferred_bytes||0)+' / '+fmt(s.total_bytes) : ''}</span>
+        </div>
+        <div style="height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden">
+          <div style="height:100%;width:${Math.min(100,pct)}%;background:${color[s.status]||'#2563eb'};transition:width .8s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:6px;color:#6b7280">
+          <span>${pct.toFixed?pct.toFixed(1):pct}%${s.total_files ? ' · '+fmt(s.transferred_files||0)+'/'+fmt(s.total_files)+' 文件' : ''}</span>
+          <span>${s.bwlimit_kb ? '限速 '+s.bwlimit_kb+'KB/s' : ''}</span>
+        </div>
+        <div style="color:#6b7280;margin-top:6px">${s.message||''}</div>
+      </div>`;
+  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+}
 async function loadImages() {
   const { images } = await api('/images');
   const box = $('images');
@@ -210,9 +241,10 @@ async function uploadFw() {
   btn.disabled = false;
 }
 
-loadHealth(); loadDaily(); loadScores(); loadImages(); loadDevices(); loadFw();
+loadHealth(); loadSync(); loadDaily(); loadScores(); loadImages(); loadDevices(); loadFw();
 setInterval(loadDevices, 15000);
 setInterval(loadDaily, 600000);
+setInterval(loadSync, 5000);
 </script>
 </body>
 </html>
