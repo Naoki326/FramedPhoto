@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from app.config import settings
-from app.routers import devices, images, ota
+from app.routers import analysis, devices, images, ota
 
 app = FastAPI(
     title="FramedPhoto Service",
@@ -24,6 +24,7 @@ app.add_middleware(
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(ota.router, prefix="/api/ota", tags=["ota"])
+app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 
 
 @app.get("/", response_class=HTMLResponse, tags=["web"])

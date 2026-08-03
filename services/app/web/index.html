@@ -47,8 +47,22 @@
   </section>
 
   <section>
+    <h2>今日精选（历史上的今天）</h2>
+    <div id="daily"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section>
     <h2>内容库（当前显示第一张）</h2>
     <div class="grid" id="images"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section>
+    <h2>照片评分（AI 分析）</h2>
+    <table>
+      <thead><tr><th>照片</th><th>类型</th><th>回忆度</th><th>美观度</th><th>文案</th><th>来源</th></tr></thead>
+      <tbody id="scores"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+    </table>
+    <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
   </section>
 
   <section>
@@ -90,6 +104,44 @@ function timeAgo(ts) {
 
 async function loadHealth() {
   try { const h = await (await fetch('/health')).json(); $('health').textContent = `EPD ${h.epd} · ok`; } catch (_) {}
+}
+async function loadDaily() {
+  const box = $('daily');
+  try {
+    const r = await fetch('/api/images/content');
+    const { images, source } = await r.json();
+    if (!images.length || source !== 'daily') {
+      box.innerHTML = '<div class="empty">暂无每日精选（上传图片或运行照片分析后生成）</div>';
+      return;
+    }
+    const m = images[0];
+    box.innerHTML = `
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <img src="/api/images/daily/preview" style="width:180px;aspect-ratio:3/4;object-fit:cover;border-radius:8px;background:#eee">
+        <div style="font-size:13px;line-height:1.9">
+          <div><b>${m.filename || ''}</b></div>
+          <div>📅 ${m.date || '—'} · 回忆度 ${m.memory_score ?? '—'}</div>
+          <div>💬 ${m.caption || '—'}</div>
+          <div style="color:#9ca3af">设备将显示这张（自动每日换片）</div>
+        </div>
+      </div>`;
+  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+}
+async function loadScores() {
+  const tbody = $('scores');
+  try {
+    const r = await fetch('/api/analysis/scores');
+    const { scores } = await r.json();
+    if (!scores.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无分析数据</td></tr>'; return; }
+    tbody.innerHTML = scores.map(s => `<tr>
+      <td title="${s.path}">${s.filename}</td>
+      <td>${s.type || '—'}</td>
+      <td>${s.memory_score?.toFixed?.(0) ?? '—'}</td>
+      <td>${s.beauty_score?.toFixed?.(0) ?? '—'}</td>
+      <td>${s.caption || '—'}</td>
+      <td>${s.source === 'vlm' ? '<span class="pill">AI</span>' : '启发式'}</td>
+    </tr>`).join('');
+  } catch (_) { tbody.innerHTML = '<tr><td colspan="6" class="empty">—</td></tr>'; }
 }
 async function loadImages() {
   const { images } = await api('/images');
@@ -158,8 +210,9 @@ async function uploadFw() {
   btn.disabled = false;
 }
 
-loadHealth(); loadImages(); loadDevices(); loadFw();
+loadHealth(); loadDaily(); loadScores(); loadImages(); loadDevices(); loadFw();
 setInterval(loadDevices, 15000);
+setInterval(loadDaily, 600000);
 </script>
 </body>
 </html>

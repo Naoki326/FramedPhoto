@@ -38,12 +38,16 @@ python tools/convert_image.py photo.jpg -o out.fps6 --preview out.png
 
 ## 里程碑状态
 
-见 [docs/roadmap.md](docs/roadmap.md)。当前 **M1+M2 代码完成**：
-- M1 驱动移植完成（双 IC 命令序列、编译通过）
-- M2 联网取图完成（内容清单拉取 + FPS6 下载 + 流式渲染，编译通过）
-- 无真机验证通过：服务端 13 单测 + 设备模拟器对照（固件读取逻辑与服务端格式一致）
+见 [docs/roadmap.md](docs/roadmap.md)。当前 **M1~M4 代码完成**：
+
+- M1 驱动移植（双 IC 命令序列、编译通过）
+- M2 联网取图（内容清单 + FPS6 下载 + 流式渲染）
+- M3 服务端（SQLite / 设备管理 / Web 管理台 / OTA）
+- M4 AI 回忆相框（照片分析评分 + 历史上的今天每日精选 + 文案渲染 + 深度休眠）
+- 服务端 37 个单测全绿，固件编译通过
 
 **真机验证**（硬件到手后）：
 1. `idf.py menuconfig` 配置 WiFi SSID/密码和服务端 URL
 2. 烧录 `./scripts/flash.sh`
-3. 无网时屏显棋盘格；配好 WiFi 后从服务端拉图显示
+3. 无网显示棋盘格；联网后拉取服务端内容（手动上传或每日精选）
+4. 显示后按 `FRAMEDPHOTO_DEEP_SLEEP_HOURS` 深度休眠，RTC 定时唤醒

@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from app import db
+from app import db, daily
 from app.config import settings
 from app.epd_image import HEADER_SIZE, SPECTRA6_PALETTE, PreparedImage, prepare_image, preview_png
 
@@ -66,6 +66,27 @@ def _get_or_404(img_id: str) -> dict:
     return meta
 
 
+@router.get("/daily/raw")
+async def get_daily_raw():
+    """每日精选 FPS6（优先于手动上传内容时设备拉取）。"""
+    if not daily.daily_fps6_exists():
+        daily.render_daily()
+    if not daily.daily_fps6_exists():
+        raise HTTPException(404, "no daily photo")
+    return Response(content=daily.DAILY_FILE.read_bytes(), media_type="application/octet-stream")
+
+
+@router.get("/daily/preview")
+async def get_daily_preview():
+    meta = daily.ensure_daily()
+    if not meta:
+        raise HTTPException(404, "no daily photo")
+    raw = daily.DAILY_FILE.read_bytes()
+    w, h = struct.unpack_from("<II", raw, 4)
+    prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+    return Response(content=preview_png(prepared), media_type="image/png")
+
+
 @router.get("/{img_id}/raw")
 async def get_raw(img_id: str):
     meta = _get_or_404(img_id)
@@ -96,10 +117,17 @@ async def delete_image(img_id: str):
 
 @router.get("/content")
 async def content_list(device_id: str | None = None):
-    """内容清单：设备轮询此接口，取最新图片；可附带设备 id 上报状态。"""
-    items = db.list_images()
+    """内容清单：设备轮询此接口。
+
+    优先级：手动上传的最新一张 > 每日精选（AI 评分 + 历史上的今天）。
+    可附带设备 id 上报状态。
+    """
     result = []
-    for m in items[:10]:  # 最多返回 10 张，设备默认取第一张
+    source = "manual"
+
+    manual = db.list_images()
+    if manual:
+        m = manual[0]
         result.append({
             "id": m["id"],
             "filename": m["filename"],
@@ -107,8 +135,26 @@ async def content_list(device_id: str | None = None):
             "height": m["height"],
             "created_at": m["created_at"],
             "url": f"/api/images/{m['id']}/raw",
+            "preview_url": f"/api/images/{m['id']}/preview",
         })
+    else:
+        meta = daily.ensure_daily()
+        if meta:
+            source = "daily"
+            result.append({
+                "id": "daily",
+                "filename": meta.get("filename", ""),
+                "caption": meta.get("caption", ""),
+                "date": meta.get("date", ""),
+                "memory_score": meta.get("memory_score"),
+                "width": meta["width"],
+                "height": meta["height"],
+                "url": "/api/images/daily/raw",
+                "preview_url": "/api/images/daily/preview",
+            })
+
     # 设备附带上报心跳（与 /heartbeat 等价，减少一次请求）
     if device_id:
-        db.upsert_device(device_id, current_image=result[0]["id"] if result else "", last_seen=db.now())
-    return {"images": result}
+        db.upsert_device(device_id, current_image=result[0]["id"] if result else "",
+                         last_seen=db.now())
+    return {"images": result, "source": source}

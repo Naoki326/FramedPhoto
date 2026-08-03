@@ -16,5 +16,18 @@ class Settings(BaseSettings):
     db_path: str = "./framedphoto.db"
     log_level: str = "INFO"
 
+    # AI 照片分析（VLM，OpenAI 兼容接口；不配置则走启发式评分）
+    vlm_enabled: bool = True
+    vlm_api_url: str = ""
+    vlm_api_key: str = ""
+    vlm_model: str = "qwen3-vl-32b-instruct"
+    vlm_timeout: int = 600
+
+    # 每日精选
+    photo_lib_dir: str = "./photos"      # 照片库目录（analyze_photos 扫描）
+    daily_min_score: float = 55.0          # 每日选片回忆度阈值
+    daily_photo_quantity: int = 1          # 每日生成精选张数（设备取第一张）
+    memory_threshold: float = 55.0         # 启发式回忆度阈值别名（保留兼容）
+
 
 settings = Settings()

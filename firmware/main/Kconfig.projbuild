@@ -21,4 +21,13 @@ menu "FramedPhoto Application"
         default 30
         range 5 1440
 
+    config FRAMEDPHOTO_DEEP_SLEEP_HOURS
+        int "Deep sleep interval (hours, 0 = disabled)"
+        default 24
+        range 0 168
+        help
+            显示更新完成后深度休眠的小时数（RTC 定时器唤醒）。
+            0 表示禁用（保持轮询，适合调试）。启用后设备每次唤醒
+            检查内容，无变化则不刷屏直接再睡，实现长期续航。
+
 endmenu

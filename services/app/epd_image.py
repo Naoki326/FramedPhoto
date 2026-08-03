@@ -22,6 +22,7 @@ from __future__ import annotations
 import io
 import struct
 from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image
 
@@ -133,6 +134,24 @@ def _to_device_layout(indices: list[list[int]], width: int) -> bytes:
     return bytes(buf)
 
 
+def _quantize_to_layout(img: Image.Image, width: int, height: int, dither: bool) -> bytes:
+    """RGB 图像（已适配目标尺寸）-> FPS6 数据区。"""
+    pix = list(img.getdata())
+    if dither:
+        rows = [pix[y * width:(y + 1) * width] for y in range(height)]
+        indices = _floyd_steinberg(rows)
+    else:
+        indices = [[_nearest_index(pix[y * width + x]) for x in range(width)] for y in range(height)]
+    return _to_device_layout(indices, width)
+
+
+def _pack_fps6(raw: bytes, width: int, height: int) -> bytes:
+    header = struct.pack(
+        "<4sIIBB6x", MAGIC, width, height, FORMAT_4BIT_DUAL_IC, PALETTE_VERSION
+    )
+    return header + raw
+
+
 def prepare_image(
     image_bytes: bytes,
     width: int = DEVICE_WIDTH,
@@ -153,11 +172,100 @@ def prepare_image(
     else:
         indices = [[_nearest_index(pix[y * width + x]) for x in range(width)] for y in range(height)]
 
-    raw = _to_device_layout(indices, width)
-    header = struct.pack(
-        "<4sIIBB6x", MAGIC, width, height, FORMAT_4BIT_DUAL_IC, PALETTE_VERSION
-    )
-    return PreparedImage(width=width, height=height, data=header + raw, palette=SPECTRA6_PALETTE)
+    raw = _quantize_to_layout(img, width, height, dither)
+    return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
+                         palette=SPECTRA6_PALETTE)
+
+
+# ---------- 文案渲染（每日精选） ----------
+
+# 跨平台中文字体候选
+_CJK_FONT_CANDIDATES = [
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+]
+
+
+def find_cjk_font() -> str | None:
+    for p in _CJK_FONT_CANDIDATES:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _wrap_cjk(draw, text: str, font, max_width: int) -> list[str]:
+    """按像素宽度对中文文案换行。"""
+    lines, cur = [], ""
+    for ch in text:
+        trial = cur + ch
+        if draw.textlength(trial, font=font) <= max_width or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = ch
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def prepare_image_with_caption(
+    image_bytes: bytes,
+    caption: str = "",
+    date_str: str = "",
+    width: int = DEVICE_WIDTH,
+    height: int = DEVICE_HEIGHT,
+    dither: bool = True,
+) -> PreparedImage:
+    """照片 + 底部文案渲染：底部黑色渐变带 + 日期小字 + 文案白字。
+
+    文字在 6 色量化之前绘制（先画再量化，保证最终屏幕效果）。
+    无中文字体或文案为空时，行为退化为纯照片。
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    img = _fit(img, width, height)
+
+    font_path = find_cjk_font()
+    if font_path and caption.strip():
+        from PIL import ImageDraw, ImageFont
+
+        draw = ImageDraw.Draw(img)
+        band_h = int(height * 0.20)
+        top = height - band_h
+
+        # 底部不透明黑色渐变（上浅下深），保证文字对比度
+        for y in range(band_h):
+            v = int(230 * (y / band_h) ** 1.4)
+            draw.line([(0, top + y), (width, top + y)], fill=(v, v, v))
+
+        text_y = top + int(band_h * 0.08)
+        margin = int(width * 0.06)
+        max_text_w = width - margin * 2
+
+        # 日期小字
+        if date_str:
+            small = ImageFont.truetype(font_path, int(height * 0.030))
+            date_w = draw.textlength(date_str, font=small)
+            draw.text(((width - date_w) / 2, text_y), date_str,
+                      font=small, fill=(220, 220, 220))
+            text_y += int(height * 0.042)
+
+        # 文案大字（居中，自动换行，最多 2 行）
+        big = ImageFont.truetype(font_path, int(height * 0.045))
+        lines = _wrap_cjk(draw, caption.strip(), big, max_text_w)[:2]
+        for line in lines:
+            lw = draw.textlength(line, font=big)
+            draw.text(((width - lw) / 2, text_y), line, font=big, fill=(255, 255, 255))
+            text_y += int(height * 0.058)
+
+    raw = _quantize_to_layout(img, width, height, dither)
+    return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
+                         palette=SPECTRA6_PALETTE)
 
 
 # 字节值 -> (偶数像素 RGB, 奇数像素 RGB) 的 256 项查找表（预览用）

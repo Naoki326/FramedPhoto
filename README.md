@@ -55,13 +55,14 @@ uvicorn app.main:app --reload
 
 - [x] 仓库骨架与环境
 - [x] 官方资料下载归档（规格书 / 设计须知 / ESP32 示例源码，见 `docs/vendor/`）
-- [x] **M1 驱动移植完成**：双 IC 命令序列 → `gdey_epd`，目标芯片 ESP32-S3，固件编译通过
-- [x] **M2 联网取图完成**：内容清单 + FPS6 下载 + 流式渲染，设备模拟器验证通过
-- [x] **M3 服务端完成**：SQLite 持久化、设备管理、Web 管理台、OTA 发布，24 单测全绿
-- [ ] **真机验证**（烧录后：棋盘格 → WiFi 连接 → 显示服务端图片）—— 硬件到手后进行
+- [x] **M1 驱动移植**（双 IC 命令序列 → `gdey_epd`，ESP32-S3，编译通过）
+- [x] **M2 联网取图**（内容清单 + FPS6 下载 + 流式渲染，模拟器验证）
+- [x] **M3 服务端**（SQLite、设备管理、Web 管理台、OTA，37 单测全绿）
+- [x] **M4 AI 回忆相框**：AI/启发式照片评分、历史上的今天每日精选、文案渲染、设备深度休眠
+- [ ] **真机验证**（烧录：棋盘格 → WiFi → 服务端图片 → 每日精选 → 深度休眠）
 - [ ] 设备端 OTA 客户端（esp_ota 分区切换）
 
-详细状态见 [docs/roadmap.md](docs/roadmap.md)，API 见 [docs/api.md](docs/api.md)。
+AI 能力见 [docs/ai-features.md](docs/ai-features.md)，API 见 [docs/api.md](docs/api.md)。
 
 路线图见 [docs/roadmap.md](docs/roadmap.md)，架构设计见 [docs/architecture.md](docs/architecture.md)。
 

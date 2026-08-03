@@ -17,6 +17,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "esp_sleep.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gdeb0709e01.h"
@@ -30,8 +32,37 @@ static const char *TAG = "display";
 #define FPS6_HEADER_SIZE 20
 #define DEMO_ONCE 1
 
+#define NVS_NS "display"
+#define NVS_KEY_LAST_ID "last_id"
+
 static gdey_epd_dev_t *s_epd;
 static char s_last_id[64] = "";
+static bool s_shown_any = false;
+
+/* ---------------- NVS 记忆上次显示内容 ---------------- */
+
+static void nvs_load_last_id(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        size_t len = sizeof(s_last_id);
+        if (nvs_get_str(h, NVS_KEY_LAST_ID, s_last_id, &len) != ESP_OK) {
+            s_last_id[0] = '\0';
+        }
+        nvs_close(h);
+    }
+    ESP_LOGI(TAG, "last content: '%s'", s_last_id);
+}
+
+static void nvs_save_last_id(const char *id)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, NVS_KEY_LAST_ID, id);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
 
 /* ---------------- 离线演示图案（M1，无网兜底） ---------------- */
 
@@ -168,9 +199,23 @@ static esp_err_t update_from_server(void)
     err = render_fps6_file(IMAGE_PATH);
     if (err == ESP_OK) {
         snprintf(s_last_id, sizeof(s_last_id), "%s", id);
+        nvs_save_last_id(s_last_id);
+        s_shown_any = true;
         ESP_LOGI(TAG, "now showing %s", id);
     }
     return err;
+}
+
+/* 深度休眠：RTC 定时器唤醒；唤醒后从 app_main 重启，内容未变则不再刷屏 */
+static void maybe_deep_sleep(void)
+{
+    if (CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS <= 0) {
+        return;
+    }
+    ESP_LOGI(TAG, "deep sleep %d h", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS);
+    esp_sleep_enable_timer_wakeup(
+        (uint64_t)CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS * 3600ULL * 1000000ULL);
+    esp_deep_sleep_start();
 }
 
 static void display_task(void *arg)
@@ -184,19 +229,23 @@ static void display_task(void *arg)
         return;
     }
 
+    nvs_load_last_id();
     err = mount_storage();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "storage mount failed, content mode disabled: %s", esp_err_to_name(err));
     }
 
     for (;;) {
-        if (wifi_app_wait_connected(1000) == ESP_OK) {
+        if (wifi_app_wait_connected(3000) == ESP_OK) {
             update_from_server();
-        } else {
-            /* 离线兜底：演示一次棋盘格 */
+        } else if (!s_shown_any) {
+            /* 离线且从未显示过：演示棋盘格 */
             ESP_LOGI(TAG, "offline: demo checkerboard");
-            show_frame_stream(build_pattern_row);
+            if (show_frame_stream(build_pattern_row) == ESP_OK) {
+                s_shown_any = true;
+            }
         }
+        maybe_deep_sleep();
         vTaskDelay(pdMS_TO_TICKS(CONFIG_FRAMEDPHOTO_POLL_INTERVAL_MIN * 60 * 1000));
     }
 }

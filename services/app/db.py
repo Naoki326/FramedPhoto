@@ -56,9 +56,33 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             size        INTEGER NOT NULL,
             created_at  REAL
         );
+
+        CREATE TABLE IF NOT EXISTS photo_scores (
+            path            TEXT PRIMARY KEY,
+            filename        TEXT DEFAULT '',
+            caption         TEXT DEFAULT '',
+            description     TEXT DEFAULT '',
+            type            TEXT DEFAULT '',
+            memory_score    REAL DEFAULT 0,
+            beauty_score    REAL DEFAULT 0,
+            reason          TEXT DEFAULT '',
+            shot_at         REAL,
+            shot_source     TEXT DEFAULT '',
+            gps_lat         REAL,
+            gps_lon         REAL,
+            source          TEXT DEFAULT '',
+            analyzed_at     REAL,
+            used_at         REAL
+        );
         """
     )
     conn.commit()
+    # 存量库兼容：补新列
+    try:
+        conn.execute("ALTER TABLE photo_scores ADD COLUMN shot_source TEXT DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
 
 
 def now() -> float:
@@ -146,3 +170,54 @@ def get_firmware(version: str) -> dict | None:
     with _lock:
         row = _get_conn().execute("SELECT * FROM firmware WHERE version=?", (version,)).fetchone()
     return dict(row) if row else None
+
+
+# ---------- photo_scores（AI 分析结果） ----------
+
+def upsert_photo_score(path: str, **fields) -> None:
+    with _lock:
+        conn = _get_conn()
+        conn.execute("INSERT OR IGNORE INTO photo_scores (path) VALUES (?)", (path,))
+        if fields:
+            sets = ", ".join(f"{k}=?" for k in fields)
+            conn.execute(f"UPDATE photo_scores SET {sets} WHERE path=?", (*fields.values(), path))
+        conn.commit()
+
+
+def get_photo_score(path: str) -> dict | None:
+    with _lock:
+        row = _get_conn().execute("SELECT * FROM photo_scores WHERE path=?", (path,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_photo_scores(limit: int = 200, analyzed_only: bool = True) -> list[dict]:
+    sql = "SELECT * FROM photo_scores"
+    if analyzed_only:
+        sql += " WHERE analyzed_at IS NOT NULL"
+    sql += " ORDER BY COALESCE(memory_score, 0) DESC LIMIT ?"
+    with _lock:
+        rows = _get_conn().execute(sql, (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_photo_used(path: str, ts: float) -> None:
+    upsert_photo_score(path, used_at=ts)
+
+
+def select_daily_candidates(target_md: tuple[int, int], min_score: float, limit: int = 20) -> list[dict]:
+    """历史上的今天：月-日 匹配所有年份的照片（须有真实 EXIF 拍摄时间）。"""
+    m, d = target_md
+    sql = """
+        SELECT * FROM photo_scores
+        WHERE analyzed_at IS NOT NULL
+          AND shot_at IS NOT NULL
+          AND shot_source = 'exif'
+          AND CAST(strftime('%m', shot_at, 'unixepoch') AS INTEGER) = ?
+          AND CAST(strftime('%d', shot_at, 'unixepoch') AS INTEGER) = ?
+          AND memory_score >= ?
+        ORDER BY memory_score DESC
+        LIMIT ?
+    """
+    with _lock:
+        rows = _get_conn().execute(sql, (m, d, min_score, limit)).fetchall()
+    return [dict(r) for r in rows]

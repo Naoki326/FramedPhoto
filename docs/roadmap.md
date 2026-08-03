@@ -3,50 +3,51 @@
 ## M0 — 环境与骨架（完成 ✅）
 - [x] Git 仓库初始化、目录结构
 - [x] ESP-IDF v6.0.x 环境确认，固件骨架可编译
-- [x] 服务端 FastAPI 骨架，epd_image 转换模块
+- [x] 服务端 FastAPI 骨架
 - [x] 官方资料下载并归档 → `docs/vendor/gdeb0709e01/`
 
-## M1 — 点亮屏幕（驱动完成，待真机验证）
+## M1 — 点亮屏幕（驱动完成 ✅，待真机验证）
 - [x] 官方 ESP32 示例源码解析：双 IC 结构、4bit/像素、init/刷新序列
-- [x] 驱动移植进 `firmware/components/gdey_epd/`（双 CS、手动 GPIO、8bit 命令相位）
-- [x] 目标芯片确认 **ESP32-S3 + 16MB flash**，分区表含双 OTA + storage
-- [x] 固件演示模式：纯色 / 6 色横条 / 棋盘格（流式生成，600B RAM）
-- [x] 服务端 FPS6 格式对齐（4bit 双 IC 布局），协议文档 `docs/protocol/fps6-format.md`
-- [x] 固件编译通过（esp32s3）；服务端 11 个单测通过
-- [ ] **真机验证**：烧录后屏幕依次显示 白屏 → 6 色横条 → 棋盘格 循环
+- [x] 驱动移植进 `firmware/components/gdey_epd/`
+- [x] 目标芯片 **ESP32-S3 + 16MB flash**，双 OTA + storage 分区
+- [x] 演示模式：纯色 / 6 色横条 / 棋盘格（600B RAM 流式）
+- [x] 服务端 FPS6 格式对齐，协议文档 `docs/protocol/fps6-format.md`
+- [ ] **真机验证**：烧录后屏幕依次显示 白屏 → 6 色横条 → 棋盘格
 
-## M2 — 联网取图（代码完成，待真机联调）
-- [x] WiFi（NVS 存凭据 + menuconfig 默认值）
-- [x] content_client：HTTP 拉取内容清单（cJSON）+ FPS6 下载到 storage 分区（SPIFFS）
-- [x] 流式渲染：从文件两阶段读取（先 IC0 全行再 IC1 全行），600B 行缓冲
-- [x] 设备模拟器 tools/simulate_device.py + 集成测试：固件读取逻辑与服务端格式一致
-- [x] 固件编译通过（958KB，OTA 分区余 70%）；服务端 13 单测通过
-- [ ] **真机联调**：WiFi 配置 → 服务端上传 → 设备显示
+## M2 — 联网取图（代码完成 ✅，待真机联调）
+- [x] WiFi（NVS 凭据 + menuconfig）
+- [x] content_client：内容清单（cJSON）+ FPS6 下载到 storage 分区
+- [x] 流式渲染（两阶段双 IC），设备模拟器 + 集成测试验证一致
+- [ ] 真机联调：WiFi 配置 → 服务端上传 → 设备显示
 
-## M3 — 服务端完善（完成 ✅）
-- [x] SQLite 持久化（devices / images / firmware 表）
-- [x] 设备注册 / 心跳 / 状态查询 API（在线状态、固件版本、电量）
-- [x] 内容管理 API：列表 / 删除 / 预览；content 接口支持设备附带上报
-- [x] Web 管理台 `GET /`：上传、内容库（预览/删除）、设备、OTA 发布
-- [x] OTA：固件上传（0xE9 魔数校验 + sha256）+ manifest 轮询 + 下载
-- [x] API 文档 `docs/api.md`；24 个单测全绿
-- [ ] 设备端 OTA 客户端（esp_ota 分区切换）—— 真机阶段实现并验证
+## M3 — 服务端基础（完成 ✅）
+- [x] SQLite 持久化（devices / images / firmware）
+- [x] 设备注册 / 心跳 / 状态查询
+- [x] 内容管理 API + Web 管理台（上传/内容库/设备/OTA）
+- [x] OTA：固件上传（0xE9 校验 + sha256）+ manifest 轮询 + 下载
 
-## M4 — 打磨
-- [ ] 低功耗（deep sleep 定时唤醒刷新）
+## M4 — AI 回忆相框（完成 ✅，参考 InkTime 思路、代码原创）
+- [x] `app/analyzer.py`：照片 AI 分析（OpenAI 兼容 VLM：描述/类型/回忆度/美观度/文案）
+      + **无 VLM 时启发式评分降级**（清晰度/色彩/亮度）
+- [x] EXIF 提取（拍摄时间/GPS），区分 exif/file 来源防止"历史上的今天"误判
+- [x] `tools/analyze_photos.py`：批量分析 CLI（并发、断点续跑）
+- [x] `app/daily.py`：历史上的今天选片（评分加权 + 防重复）+ 每日精选渲染（带文案）
+- [x] content 优先级：手动上传 > 每日精选
+- [x] 文案渲染：`prepare_image_with_caption`（底部渐变 + 中文白字，6 色量化前绘制）
+- [x] 设备端深度休眠（RTC 定时器唤醒 + NVS 记忆上次内容，无变化不刷屏）
+- [x] WebUI：今日精选展示 + 照片评分列表
+
+## M5 — 打磨（真机阶段）
+- [ ] 真机联调：显示 / WiFi / 深度休眠全流程
+- [ ] 设备端 OTA 客户端（esp_ota 分区切换）
 - [ ] 断网重连 / 异常恢复
-- [ ] 时间显示（RTC / NTP）
 - [ ] 部署：docker-compose 一键起服务
 
 ## 资料清单（docs/vendor/gdeb0709e01/）
 
 | 文件 | 说明 |
 | --- | --- |
-| GDEB0709E01_规格书.pdf | 官方数据手册（23 页，含引脚/电路/时序/光学特性） |
+| GDEB0709E01_规格书.pdf | 官方数据手册（23 页） |
 | E6设计须知_CN.pdf | Spectra 6 面板设计注意事项 |
-| 固件烧录方式.pdf | 配套板固件烧录方法（WiFi/SD 模式） |
-| esp32_example/ | 官方 ESP-IDF 示例源码（main/：GDEP133C02 驱动 + comm + usbcdc） |
-
-> 预编译固件（WiFi/SD 卡模式 bin）、NeoFrame 安卓应用、Spectra6 USB 工具为配套板
-> 成品方案附件，体积大且非本仓库开发所需，未入库；需要时可从产品页重新下载：
-> <https://www.good-display.cn/product/729.html> → 相关资料下载。
+| 固件烧录方式.pdf | 配套板固件烧录方法 |
+| esp32_example/ | 官方 ESP-IDF 示例源码 |
