@@ -55,9 +55,10 @@ uvicorn app.main:app --reload
 
 - [x] 仓库骨架与环境
 - [x] 官方资料下载归档（规格书 / 设计须知 / ESP32 示例源码，见 `docs/vendor/`）
-- [ ] M1：驱动移植（双 IC 命令序列 → gdey_epd）+ 点亮屏幕 —— **进行中**
-- [ ] 固件应用层（WiFi + 内容拉取 + 渲染）
-- [ ] 服务端图片转换格式对齐（4bit/像素，匹配设备端）
+- [x] **M1 驱动移植完成**：双 IC 命令序列 → `gdey_epd`，目标芯片 ESP32-S3，固件编译通过
+- [x] 服务端 FPS6 格式对齐（4bit/像素 + 双 IC 布局），11 个测试通过
+- [ ] **真机验证**（烧录后依次显示白屏 → 6 色横条 → 棋盘格）—— 硬件到手后进行
+- [ ] M2：固件联网取图（WiFi + HTTP 拉取 + 渲染）
 - [ ] 设备管理与 OTA
 
 路线图见 [docs/roadmap.md](docs/roadmap.md)，架构设计见 [docs/architecture.md](docs/architecture.md)。

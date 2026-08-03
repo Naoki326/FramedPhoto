@@ -6,13 +6,13 @@
 ./scripts/setup.sh
 ```
 
-## 固件开发循环
+## 固件开发循环（ESP32-S3 配套板）
 
 ```bash
 cd firmware
 source ~/esp/esp-idf/export.sh
-idf.py set-target esp32          # 首次
-idf.py menuconfig                # WiFi SSID/密码、服务端 URL、EPD 引脚
+idf.py set-target esp32s3        # 首次（目标芯片为配套板 ESP32-S3）
+idf.py menuconfig                # WiFi SSID/密码、服务端 URL、EPD 引脚（默认已按配套板）
 idf.py build
 idf.py -p /dev/cu.usbserial-XXXX flash monitor
 ```
@@ -38,6 +38,5 @@ python tools/convert_image.py photo.jpg -o out.fps6 --preview out.png
 
 ## 里程碑状态
 
-见 [docs/roadmap.md](docs/roadmap.md)。当前处于 **M0/M1 交界**：
-- M1 需要官方资料包（数据手册）才能填充 `gdeb0709e01.c` 的 init/刷新序列。
-- 拿到资料后第一步：把命令序列填入驱动组件，烧录跑「点亮屏幕」测试。
+见 [docs/roadmap.md](docs/roadmap.md)。当前 **M1 已实现（驱动移植完成、编译/单测通过）**，
+剩余工作为**真机验证**：烧录后屏幕应依次显示白屏 → 6 色横条 → 棋盘格循环。
