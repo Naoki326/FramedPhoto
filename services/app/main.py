@@ -1,6 +1,9 @@
 """FramedPhoto 服务端入口。"""
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from app.config import settings
 from app.routers import devices, images, ota
@@ -8,7 +11,7 @@ from app.routers import devices, images, ota
 app = FastAPI(
     title="FramedPhoto Service",
     description="E Ink 数字相框：图片转换 / 设备管理 / OTA 分发",
-    version="0.1.0",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -21,6 +24,12 @@ app.add_middleware(
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(ota.router, prefix="/api/ota", tags=["ota"])
+
+
+@app.get("/", response_class=HTMLResponse, tags=["web"])
+async def index():
+    html = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html)
 
 
 @app.get("/health", tags=["meta"])

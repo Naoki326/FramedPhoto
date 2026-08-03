@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FramedPhoto 管理台</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
+  header { background: #1f2937; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #374151; }
+  .upload-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input[type=file] { flex: 1; min-width: 220px; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #1d4ed8; }
+  button.danger { background: #dc2626; }
+  button.danger:hover { background: #b91c1c; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .card { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .card img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; background: #eee; }
+  .card .meta { padding: 8px 10px; font-size: 12px; color: #6b7280; }
+  .card .meta b { display: block; color: #111; font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .row { display: flex; justify-content: space-between; align-items: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+  th { color: #6b7280; font-weight: 500; }
+  .empty { color: #9ca3af; font-size: 13px; padding: 12px 0; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #eef2ff; color: #4338ca; }
+  .pill.online { background: #dcfce7; color: #166534; }
+  .pill.offline { background: #fee2e2; color: #991b1b; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.show { opacity: .95; }
+</style>
+</head>
+<body>
+<header><h1>🖼 FramedPhoto 管理台</h1><span id="health" style="font-size:13px;opacity:.8">…</span></header>
+<main>
+  <section>
+    <h2>上传图片</h2>
+    <div class="upload-row">
+      <input type="file" id="file" accept="image/*" multiple>
+      <button onclick="upload()" id="uploadBtn">上传并转换</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>内容库（当前显示第一张）</h2>
+    <div class="grid" id="images"><div class="empty">加载中…</div></div>
+  </section>
+
+  <section>
+    <h2>设备</h2>
+    <table>
+      <thead><tr><th>设备 ID</th><th>固件</th><th>当前内容</th><th>电量</th><th>最后心跳</th></tr></thead>
+      <tbody id="devices"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>固件（OTA）</h2>
+    <div id="fwInfo" class="empty">加载中…</div>
+    <div class="upload-row" style="margin-top:12px">
+      <input type="text" id="fwVersion" placeholder="版本号（如 0.3.0）" style="width:160px;padding:8px;border:1px solid #d1d5db;border-radius:6px">
+      <input type="file" id="fwFile" accept=".bin">
+      <button onclick="uploadFw()" id="fwBtn">发布固件</button>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2500); }
+async function api(path, opts) {
+  const r = await fetch('/api' + path, opts);
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const s = Math.floor((Date.now() / 1000 - ts));
+  if (s < 60) return s + 's 前';
+  if (s < 3600) return Math.floor(s / 60) + 'm 前';
+  if (s < 86400) return Math.floor(s / 3600) + 'h 前';
+  return Math.floor(s / 86400) + 'd 前';
+}
+
+async function loadHealth() {
+  try { const h = await (await fetch('/health')).json(); $('health').textContent = `EPD ${h.epd} · ok`; } catch (_) {}
+}
+async function loadImages() {
+  const { images } = await api('/images');
+  const box = $('images');
+  if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
+  box.innerHTML = images.map(m => `
+    <div class="card">
+      <img src="/api/images/${m.id}/preview" loading="lazy">
+      <div class="meta">
+        <b title="${m.filename || ''}">${m.filename || m.id}</b>
+        <div class="row"><span>${timeAgo(m.created_at)}</span>
+          <button class="danger" onclick="delImage('${m.id}')">删除</button></div>
+      </div>
+    </div>`).join('');
+}
+async function loadDevices() {
+  const { devices } = await api('/devices');
+  const tbody = $('devices');
+  if (!devices.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无设备</td></tr>'; return; }
+  const now = Date.now() / 1000;
+  tbody.innerHTML = devices.map(d => {
+    const online = d.last_seen && (now - d.last_seen) < 300;
+    return `<tr>
+      <td>${d.id} <span class="pill ${online ? 'online' : 'offline'}">${online ? '在线' : '离线'}</span></td>
+      <td>${d.firmware_version || '—'}</td>
+      <td>${d.current_image ? d.current_image.slice(0, 12) : '—'}</td>
+      <td>${d.battery >= 0 ? d.battery.toFixed(0) + '%' : '—'}</td>
+      <td>${timeAgo(d.last_seen)}</td>
+    </tr>`;
+  }).join('');
+}
+async function loadFw() {
+  try { const { detail } = await api('/ota/manifest');
+    $('fwInfo').innerHTML = detail
+      ? `最新固件：<b>${detail.version}</b>（${(detail.size / 1024).toFixed(0)}KB，sha256 ${detail.sha256.slice(0, 12)}…）`
+      : '<span class="empty">暂无已发布固件</span>';
+  } catch (_) { $('fwInfo').innerHTML = '<span class="empty">—</span>'; }
+}
+
+async function upload() {
+  const files = $('file').files;
+  if (!files.length) return toast('请先选择图片');
+  const btn = $('uploadBtn'); btn.disabled = true;
+  for (const f of files) {
+    const fd = new FormData(); fd.append('file', f);
+    try { const m = await api('/images/upload', { method: 'POST', body: fd }); toast(`已上传 ${m.filename || m.id}`); }
+    catch (e) { toast('上传失败: ' + e.message); }
+  }
+  btn.disabled = false;
+  loadImages();
+}
+async function delImage(id) {
+  if (!confirm('删除这张图片？')) return;
+  try { await api('/images/' + id, { method: 'DELETE' }); toast('已删除'); loadImages(); }
+  catch (e) { toast('删除失败: ' + e.message); }
+}
+async function uploadFw() {
+  const f = $('fwFile').files[0];
+  if (!f) return toast('请选择固件 bin');
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('version', $('fwVersion').value.trim());
+  const btn = $('fwBtn'); btn.disabled = true;
+  try { const m = await api('/ota/upload', { method: 'POST', body: fd }); toast(`固件 v${m.version} 已发布`); loadFw(); }
+  catch (e) { toast('发布失败: ' + e.message); }
+  btn.disabled = false;
+}
+
+loadHealth(); loadImages(); loadDevices(); loadFw();
+setInterval(loadDevices, 15000);
+</script>
+</body>
+</html>

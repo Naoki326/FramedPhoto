@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     epd_height: int = 1600
 
     upload_dir: str = "./uploads"
+    ota_dir: str = "./ota"
+    db_path: str = "./framedphoto.db"
     log_level: str = "INFO"
 
 

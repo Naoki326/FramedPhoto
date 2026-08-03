@@ -33,3 +33,6 @@ dist/
 data/
 uploads/
 **/uploads/
+**/ota/
+*.db
+framedphoto.db*
