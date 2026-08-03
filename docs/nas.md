@@ -1,73 +1,92 @@
 # 接入群晖 NAS 作为照片数据源
 
-照片库放在群晖 NAS 上，FramedPhoto 通过 **SMB 挂载**直接读取 NAS 照片，
-分析（`analyze_photos.py`）与每日精选（`daily.py`）均以挂载点路径访问。
+照片库放在群晖 NAS 上。按 NAS 部署位置选择接入方式：
 
-## 群晖侧准备
+## 方案 A：远程 NAS（IPv6 公网）— rsync over SSH（推荐）
 
-1. 控制面板 → 文件服务 → **SMB/AFP** → 启用 SMB 服务
-2. 控制面板 → 共享文件夹 → 新建/确认一个共享（如 `photo`），
-   把照片放进去（可按年份/事件分子目录）
-3. 控制面板 → 用户账号 → 确认有可用的 SMB 用户名/密码
+**不要用 SMB 直连**：公网 SMB 慢、易断、445 端口暴露不安全，且每次读图全量传文件。
 
-## 本机挂载（macOS / Linux）
-
-```bash
-# 1) 配置（不提交到 git，.env 已被忽略）
-cd services && cp .env.example .env
-
-# .env 里填：
-NAS_HOST=192.168.1.5          # 群晖 IP 或主机名
-NAS_SHARE=photo               # 共享名
-NAS_USER=yourname             # SMB 用户名
-NAS_PASSWORD=                 # 密码（留空则挂载时交互输入）
-NAS_MOUNT_POINT=/Volumes/framedphoto-nas   # 挂载点（固定，勿改）
-
-# 2) 挂载 / 查看 / 卸载
-./scripts/mount_nas.sh mount
-./scripts/mount_nas.sh status
-./scripts/mount_nas.sh umount
+```
+群晖 NAS（IPv6 公网）
+   │  rsync over SSH（增量、加密）
+   ▼
+本机同步目录 ./photos  ←─ PHOTO_LIB_DIR 指向这里
+   │  分析/每日精选全在本地跑（NAS 掉线不影响）
+   ▼
+服务端 → 相框
 ```
 
-> **挂载点必须固定**：分析结果在数据库里存的是照片的绝对路径，
-> 挂载点改变会导致已分析照片失效（重新分析即可恢复）。
+### 群晖侧准备
 
-## 配置照片库路径
+1. 控制面板 → 终端机和 SNMP → 启用 **SSH**
+2. 确认照片目录路径（默认 `/volume1/photo`，可在 File Station 里看属性）
+3. （可选）为 FramedPhoto 建一个只读权限的专用用户，或用管理员账号
+
+### 本机配置与同步
 
 ```bash
-# .env 里把 PHOTO_LIB_DIR 指向挂载点下的照片目录
-PHOTO_LIB_DIR=/Volumes/framedphoto-nas/photo
+# .env 配置
+NAS_SSH_HOST=240e:xxxx:xxxx::1    # NAS 的 IPv6 地址（或域名）
+NAS_SSH_USER=yourname
+NAS_SSH_PORT=22
+NAS_PHOTO_DIR=/volume1/photo
+PHOTO_LIB_DIR=./photos            # 本机同步目录
+
+# 增量同步（首次全量，之后只传新增）
+./scripts/sync_nas.sh
+# 演练 / 删除本机已不存在的照片
+./scripts/sync_nas.sh --dry-run
+./scripts/sync_nas.sh --delete
 ```
 
-## 使用流程
+> IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。
+> 建议配置 SSH 免密（`ssh-copy-id`）后，把同步加入定时任务：
+> `crontab -e` → `0 3 * * * cd <repo> && ./scripts/sync_nas.sh >> /tmp/sync_nas.log 2>&1`
+
+### 流量说明
+
+| 阶段 | 流量 |
+| --- | --- |
+| 首次同步 | 整个照片库一次（如 100GB 照片 = 100GB） |
+| 之后每次 | 仅新增/变化文件（几 MB ~ 几十 MB） |
+| 每日精选渲染 | 读本地副本，**0 网络流量** |
+
+## 方案 B：局域网 NAS — SMB 挂载
+
+NAS 与运行服务端的机器在同一局域网时，直接 SMB 挂载（实时读取，无需同步）：
 
 ```bash
-# 1. 挂载 NAS
+# .env 配置
+NAS_HOST=192.168.1.5
+NAS_SHARE=photo
+NAS_USER=yourname
+NAS_PASSWORD=               # 留空则交互输入
+NAS_MOUNT_POINT=/Volumes/framedphoto-nas
+
 ./scripts/mount_nas.sh mount
+# PHOTO_LIB_DIR=/Volumes/framedphoto-nas/photo
+```
 
-# 2. 全量分析 NAS 照片（AI 评分；断点续跑，只分析新增）
-python tools/analyze_photos.py /Volumes/framedphoto-nas/photo -j 4
+## 使用流程（两种方案通用）
 
-# 3. 启动服务（每日精选自动从 NAS 照片里选片）
+```bash
+# 1. 同步或挂载 NAS 照片到本机
+# 2. 全量分析（AI 评分，断点续跑）
+python tools/analyze_photos.py ./photos -j 4
+# 3. 启动服务（每日精选自动选片）
 cd services && uvicorn app.main:app
 ```
 
-## NAS 掉线的容错
+## 掉线容错
 
 | 场景 | 行为 |
 | --- | --- |
-| 分析时 NAS 未挂载 | `analyze_photos.py` 明确报错并提示运行 `mount_nas.sh mount` |
-| 每日精选选中的照片不可达 | 跳过该候选，选下一张（`daily.py` 已做存在性检查） |
-| 照片被删除 / 挂载点变化 | 运行 `python tools/analyze_photos.py <dir> --prune-stale` 清理失效记录 |
-
-## 其它方案（按需）
-
-- **rsync 同步**：不依赖实时挂载，`rsync -av nas:/photo/ ./photos/` 定期同步到本地
-- **Synology Photos API**：直接调群晖相册 API（开发量大，暂不支持）
+| 分析时目录不可达 | 明确报错并提示先同步/挂载 |
+| 每日精选选中照片不可达 | 跳过，选下一张（不崩溃） |
+| 照片删除/目录变化 | `python tools/analyze_photos.py <dir> --prune-stale` 清理失效记录 |
+| rsync 同步中断 | 脚本带 `--partial --timeout`，重跑继续，不重复传已完成部分 |
 
 ## 注意
 
-- `NAS_PASSWORD` 写入 `.env` 有泄露风险（.env 已被 gitignore，本机权限默认 644，
-  建议 `chmod 600 services/.env`）；也可留空每次交互输入
-- 挂载对 NAS 掉线敏感：相框轮询期间 NAS 不可达，每日精选会自动跳过
-  不可达照片，不会崩溃
+- `NAS_PASSWORD` 等敏感配置在 `services/.env`（已被 gitignore），建议 `chmod 600 services/.env`
+- 挂载点 / 同步目录路径固定，避免已分析照片的绝对路径失效（失效可重分析恢复）
