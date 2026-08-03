@@ -38,5 +38,12 @@ python tools/convert_image.py photo.jpg -o out.fps6 --preview out.png
 
 ## 里程碑状态
 
-见 [docs/roadmap.md](docs/roadmap.md)。当前 **M1 已实现（驱动移植完成、编译/单测通过）**，
-剩余工作为**真机验证**：烧录后屏幕应依次显示白屏 → 6 色横条 → 棋盘格循环。
+见 [docs/roadmap.md](docs/roadmap.md)。当前 **M1+M2 代码完成**：
+- M1 驱动移植完成（双 IC 命令序列、编译通过）
+- M2 联网取图完成（内容清单拉取 + FPS6 下载 + 流式渲染，编译通过）
+- 无真机验证通过：服务端 13 单测 + 设备模拟器对照（固件读取逻辑与服务端格式一致）
+
+**真机验证**（硬件到手后）：
+1. `idf.py menuconfig` 配置 WiFi SSID/密码和服务端 URL
+2. 烧录 `./scripts/flash.sh`
+3. 无网时屏显棋盘格；配好 WiFi 后从服务端拉图显示

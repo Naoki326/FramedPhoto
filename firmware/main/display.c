@@ -1,26 +1,40 @@
 /*
  * display.c — 显示调度任务
  *
- * 当前为 M1 演示模式（无需真机即可编译验证）：
- *   1. init 序列
- *   2. 全屏纯色 / 6 色横条 / 棋盘格 循环演示
+ * M2 流程：
+ *   1. 挂载 storage 分区（SPIFFS）
+ *   2. EPD init
+ *   3. 主循环：
+ *      - WiFi 未连接 → 离线演示（白屏/棋盘格，便于无网调试）
+ *      - WiFi 已连接 → 拉取内容清单，新图片则下载到 /spiffs/last.fps6
+ *        并从文件流式渲染（两阶段：先 IC0 全部行，再 IC1 全部行）
+ *      - 按 CONFIG_FRAMEDPHOTO_POLL_INTERVAL_MIN 轮询
  *
- * 图案全部流式生成（600B 行缓冲），不占整帧 RAM。
- * TODO(M2): 接入 HTTP 内容拉取，替换演示循环。
+ * 渲染为流式：行缓冲 600B，不从文件加载整帧，RAM 占用最小。
  */
+#include <stdio.h>
 #include <string.h>
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gdeb0709e01.h"
+#include "wifi_app.h"
+#include "content_client.h"
 #include "display.h"
 
 static const char *TAG = "display";
 
-#define DEMO_INTERVAL_MS 8000
+#define IMAGE_PATH "/spiffs/last.fps6"
+#define FPS6_HEADER_SIZE 20
+#define DEMO_ONCE 1
 
-/* 6 色 nibble 表（索引 0..5 -> 设备 nibble） */
+static gdey_epd_dev_t *s_epd;
+static char s_last_id[64] = "";
+
+/* ---------------- 离线演示图案（M1，无网兜底） ---------------- */
+
 static const uint8_t s_nibbles[6] = {
     EPD_COLOR_BLACK, EPD_COLOR_WHITE, EPD_COLOR_YELLOW,
     EPD_COLOR_RED,   EPD_COLOR_BLUE,  EPD_COLOR_GREEN,
@@ -31,12 +45,6 @@ static uint8_t nibble_of(int idx)
     return s_nibbles[idx % 6];
 }
 
-/*
- * 行缓冲布局（与 FPS6 设备格式一致）：
- *   k = (1198 - x) / 2  →  逻辑像素 x 落在字节 k
- *   k < 300  → IC0（右半屏）；k >= 300 → IC1（左半屏）
- *   高 nibble = 偶数像素 x，低 nibble = x+1
- */
 static void build_pattern_row(int y, uint8_t *row)
 {
     for (int x = 0; x < GDEB0709E01_WIDTH; x += 2) {
@@ -47,21 +55,13 @@ static void build_pattern_row(int y, uint8_t *row)
     }
 }
 
-/* 6 色横向色条（y 方向 6 段，段内整行同色） */
-static void build_colorbar_row(int y, uint8_t *row)
-{
-    int seg = y / (GDEB0709E01_HEIGHT / 6);
-    uint8_t b = EPD_COLOR_BYTE(nibble_of(seg));
-    memset(row, b, GDEB0709E01_WIDTH / 2);
-}
-
 typedef void (*row_builder_t)(int y, uint8_t *row);
 
-/* 两阶段流式送帧：IC0 全部行 → IC1 全部行 → 刷新 */
-static esp_err_t show_frame_stream(gdey_epd_dev_t *dev, row_builder_t builder)
+static esp_err_t show_frame_stream(row_builder_t builder)
 {
-    uint8_t row[GDEB0709E01_WIDTH / 2]; /* 600B */
-    const size_t half = dev->bytes_per_ic_row; /* 300 */
+    gdey_epd_dev_t *dev = s_epd;
+    uint8_t row[GDEB0709E01_WIDTH / 2];
+    const size_t half = dev->bytes_per_ic_row;
 
     ESP_RETURN_ON_ERROR(gdeb0709e01_begin(dev), TAG, "begin");
     for (int y = 0; y < dev->height; y++) {
@@ -76,33 +76,128 @@ static esp_err_t show_frame_stream(gdey_epd_dev_t *dev, row_builder_t builder)
     return gdeb0709e01_end(dev);
 }
 
+/* ---------------- 从文件渲染 FPS6（M2） ---------------- */
+
+static esp_err_t render_fps6_file(const char *path)
+{
+    gdey_epd_dev_t *dev = s_epd;
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        ESP_LOGE(TAG, "open %s failed", path);
+        return ESP_FAIL;
+    }
+
+    uint8_t row[GDEB0709E01_WIDTH / 2]; /* 600B：IC0 前 300B + IC1 后 300B */
+    esp_err_t err = ESP_OK;
+
+    /* 阶段 1：IC0 全部行（每行前 300B） */
+    fseek(fp, FPS6_HEADER_SIZE, SEEK_SET);
+    if ((err = gdeb0709e01_begin(dev)) != ESP_OK) {
+        goto out;
+    }
+    for (int y = 0; y < dev->height; y++) {
+        if (fread(row, 1, dev->bytes_per_row, fp) != (size_t)dev->bytes_per_row) {
+            err = ESP_ERR_INVALID_RESPONSE;
+            break;
+        }
+        if ((err = gdeb0709e01_send_ic_row(dev, row)) != ESP_OK) {
+            break;
+        }
+    }
+
+    /* 阶段 2：IC1 全部行（每行后 300B —— 数据区 offset 20+300 起连续） */
+    if (err == ESP_OK) {
+        fseek(fp, FPS6_HEADER_SIZE + dev->bytes_per_ic_row, SEEK_SET);
+        if ((err = gdeb0709e01_next_ic(dev)) == ESP_OK) {
+            for (int y = 0; y < dev->height; y++) {
+                if (fread(row, 1, dev->bytes_per_ic_row, fp) != (size_t)dev->bytes_per_ic_row) {
+                    err = ESP_ERR_INVALID_RESPONSE;
+                    break;
+                }
+                if ((err = gdeb0709e01_send_ic_row(dev, row)) != ESP_OK) {
+                    break;
+                }
+            }
+        }
+    }
+
+out:
+    fclose(fp);
+    if (err == ESP_OK) {
+        ESP_RETURN_ON_ERROR(gdeb0709e01_end(dev), TAG, "end");
+    }
+    ESP_LOGI(TAG, "rendered %s (%s)", path, err == ESP_OK ? "ok" : esp_err_to_name(err));
+    return err;
+}
+
+/* ---------------- 主流程 ---------------- */
+
+static esp_err_t mount_storage(void)
+{
+    esp_vfs_spiffs_conf_t conf = {
+        .base_path = "/spiffs",
+        .partition_label = "storage",
+        .max_files = 5,
+        .format_if_mount_failed = true,
+    };
+    esp_err_t err = esp_vfs_spiffs_register(&conf);
+    if (err == ESP_OK) {
+        size_t total = 0, used = 0;
+        esp_spiffs_info("storage", &total, &used);
+        ESP_LOGI(TAG, "storage: %u/%u bytes used", (unsigned)used, (unsigned)total);
+    }
+    return err;
+}
+
+static esp_err_t update_from_server(void)
+{
+    char id[64];
+    esp_err_t err = content_fetch_current_id(id, sizeof(id));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "no content: %s", esp_err_to_name(err));
+        return err;
+    }
+    if (strcmp(id, s_last_id) == 0) {
+        ESP_LOGI(TAG, "content unchanged (%s)", id);
+        return ESP_OK;
+    }
+    err = content_download_image(id, IMAGE_PATH);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = render_fps6_file(IMAGE_PATH);
+    if (err == ESP_OK) {
+        snprintf(s_last_id, sizeof(s_last_id), "%s", id);
+        ESP_LOGI(TAG, "now showing %s", id);
+    }
+    return err;
+}
+
 static void display_task(void *arg)
 {
-    gdey_epd_dev_t *epd = (gdey_epd_dev_t *)arg;
-    ESP_LOGI(TAG, "display task started (%dx%d)", epd->width, epd->height);
+    s_epd = (gdey_epd_dev_t *)arg;
+    ESP_LOGI(TAG, "display task started (%dx%d)", s_epd->width, s_epd->height);
 
-    esp_err_t err = gdeb0709e01_init(epd);
+    esp_err_t err = gdeb0709e01_init(s_epd);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "epd init failed: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "M1 demo loop start");
+
+    err = mount_storage();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "storage mount failed, content mode disabled: %s", esp_err_to_name(err));
+    }
 
     for (;;) {
-        /* 1. 白色全屏 */
-        ESP_LOGI(TAG, "demo: fill white");
-        gdeb0709e01_fill(epd, EPD_COLOR_BYTE(EPD_COLOR_WHITE));
-        vTaskDelay(pdMS_TO_TICKS(DEMO_INTERVAL_MS));
-
-        /* 2. 6 色横条 */
-        ESP_LOGI(TAG, "demo: color bar");
-        show_frame_stream(epd, build_colorbar_row);
-        vTaskDelay(pdMS_TO_TICKS(DEMO_INTERVAL_MS));
-
-        /* 3. 棋盘格 */
-        ESP_LOGI(TAG, "demo: checkerboard");
-        show_frame_stream(epd, build_pattern_row);
-        vTaskDelay(pdMS_TO_TICKS(DEMO_INTERVAL_MS));
+        if (wifi_app_wait_connected(1000) == ESP_OK) {
+            update_from_server();
+        } else {
+            /* 离线兜底：演示一次棋盘格 */
+            ESP_LOGI(TAG, "offline: demo checkerboard");
+            show_frame_stream(build_pattern_row);
+        }
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_FRAMEDPHOTO_POLL_INTERVAL_MIN * 60 * 1000));
     }
 }
 
