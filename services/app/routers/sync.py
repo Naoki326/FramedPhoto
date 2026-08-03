@@ -10,7 +10,7 @@ from fastapi import APIRouter
 
 router = APIRouter()
 
-_STATUS_FILE = Path(__file__).resolve().parent.parent / "sync_status.json"
+_STATUS_FILE = Path(__file__).resolve().parent.parent.parent / "sync_status.json"
 _STALE_AFTER_S = 120  # 超过此秒数无更新视为失联
 
 

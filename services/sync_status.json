@@ -1,1 +1,1 @@
-{"status": "running", "percent": 0, "total_files": 1846, "total_bytes": 3628987788, "transferred_files": 0, "transferred_bytes": 0, "bwlimit_kb": "100", "message": "开始同步", "started_at": 1785791504, "updated_at": 1785791504.565263}
+{"status": "running", "percent": 0, "total_files": 1846, "total_bytes": 3628987788, "transferred_files": 0, "transferred_bytes": 4537698, "bwlimit_kb": "100", "message": "同步中（限速 100 KB/s）", "started_at": 1785792007, "updated_at": 1785792043.609269}

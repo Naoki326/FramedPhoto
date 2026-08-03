@@ -147,6 +147,9 @@ RSYNC_OPTS=(-e "ssh -p ${NAS_SSH_PORT} -o ConnectTimeout=15")
 RSYNC_PID=$!
 
 # 进度循环：解析 rsync progress2 输出，持续更新状态
+# 注意：列文件清单阶段日志无 '%'，grep 返回非零；set -e 下会误杀脚本，
+# 因此循环与 wait 全程关闭 errexit（rsync 退出码由 RC 显式捕获）
+set +e
 while kill -0 "$RSYNC_PID" 2>/dev/null; do
   LAST=$(tr '\r' '\n' < "$RSYNC_LOG" | grep '%' | tail -1)
   PERCENT=$(echo "$LAST" | grep -oE '[0-9]+%' | tail -1 | tr -d '%')
@@ -162,6 +165,7 @@ while kill -0 "$RSYNC_PID" 2>/dev/null; do
   sleep 5
 done
 wait "$RSYNC_PID"; RC=$?
+set -e
 
 # ---------- 结束：写入最终状态 ----------
 if [ "$RC" -eq 0 ]; then
