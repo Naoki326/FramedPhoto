@@ -26,11 +26,14 @@
 
 ```bash
 # .env 配置
-NAS_SSH_HOST=240e:xxxx:xxxx::1    # NAS 的 IPv6 地址（或域名）
-NAS_SSH_USER=yourname
+NAS_SSH_HOST=ds923             # SSH config 别名 / IPv6 / 域名
+NAS_SSH_USER=root
 NAS_SSH_PORT=22
-NAS_PHOTO_DIR=/volume1/photo
-PHOTO_LIB_DIR=./photos            # 本机同步目录
+NAS_PHOTO_DIR=/volume1/photo/相片
+NAS_RSYNC_PATH=/usr/local/bin/rsync   # 群晖必须：/usr/bin/rsync 被 hook 成
+                                       # daemon 模式，synocli-net 套件的真 rsync
+NAS_RSYNC_BWLIMIT=100          # 限速 KB/s（0 = 不限）
+PHOTO_LIB_DIR=./photos
 
 # 增量同步（首次全量，之后只传新增）
 ./scripts/sync_nas.sh
