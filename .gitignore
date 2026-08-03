@@ -1,0 +1,35 @@
+# --- 工具/编辑器 ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# pi 工具状态目录
+.pi-glla/
+
+# --- ESP-IDF 固件构建产物 ---
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/sdkconfig.defaults.old
+firmware/dependencies.lock
+firmware/managed_components/
+firmware/.build/
+
+# --- Python / 服务端 ---
+services/.venv/
+services/__pycache__/
+**/__pycache__/
+*.py[cod]
+services/.env
+services/.pytest_cache/
+services/*.egg-info/
+dist/
+*.egg-info/
+
+# --- 运行数据 ---
+*.log
+data/
+uploads/
+**/uploads/

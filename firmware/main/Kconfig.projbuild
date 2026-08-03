@@ -1,0 +1,24 @@
+menu "FramedPhoto Application"
+
+    config FRAMEDPHOTO_WIFI_SSID
+        string "WiFi SSID"
+        default "your_ssid"
+        help
+            首次使用在 menuconfig 中填入，或运行时写入 NVS。
+
+    config FRAMEDPHOTO_WIFI_PASSWORD
+        string "WiFi password"
+        default ""
+
+    config FRAMEDPHOTO_SERVER_URL
+        string "Service base URL"
+        default "http://192.168.1.100:8000"
+        help
+            服务端根地址，后续内容拉取 / 状态上报 / OTA 均以此为前缀。
+
+    config FRAMEDPHOTO_POLL_INTERVAL_MIN
+        int "Content poll interval (minutes)"
+        default 30
+        range 5 1440
+
+endmenu

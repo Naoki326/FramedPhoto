@@ -1,0 +1,57 @@
+menu "GDEY EPD Driver"
+
+    choice GDEY_EPD_SPI_HOST
+        prompt "SPI host"
+        default GDEY_EPD_SPI_HOST_SPI2
+        help
+            ESP32 上 SPI2 (FSPI) 常用于外设扩展。
+
+        config GDEY_EPD_SPI_HOST_SPI2
+            bool "SPI2_HOST"
+        config GDEY_EPD_SPI_HOST_SPI3
+            bool "SPI3_HOST"
+    endchoice
+
+    config GDEY_EPD_SPI_HOST
+        int
+        default 1 if GDEY_EPD_SPI_HOST_SPI2
+        default 2 if GDEY_EPD_SPI_HOST_SPI3
+
+    config GDEY_EPD_SPI_SCLK
+        int "SCLK GPIO"
+        default 18
+
+    config GDEY_EPD_SPI_MOSI
+        int "MOSI GPIO"
+        default 23
+
+    config GDEY_EPD_SPI_CLOCK_HZ
+        int "SPI clock (Hz)"
+        default 20000000
+        range 1000000 40000000
+        help
+            EPD 刷新数据量大，速率受屏幕驱动 IC 上限约束；
+            稳定起见默认 20 MHz，出问题时可调低。
+
+    config GDEY_EPD_PIN_CS
+        int "CS GPIO"
+        default 5
+
+    config GDEY_EPD_PIN_DC
+        int "DC GPIO"
+        default 17
+
+    config GDEY_EPD_PIN_RST
+        int "RST GPIO"
+        default 16
+
+    config GDEY_EPD_PIN_BUSY
+        int "BUSY GPIO"
+        default 4
+
+    config GDEY_EPD_PIN_PWR
+        int "PWR GPIO (-1 = 常供电)"
+        default -1
+        range -1 39
+
+endmenu
