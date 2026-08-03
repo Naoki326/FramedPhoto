@@ -3,18 +3,38 @@
 FramedPhoto 的「AI 回忆相框」能力：分析照片库 → 评分 → 每日自动选出
 「历史上的今天」最值得看的照片，带文案渲染到相框。
 
-## 1. 分析照片库
+## 1. 配置 VLM（三种方式，任选其一）
+
+`services/.env`（从 `services/.env.example` 复制）：
+
+```ini
+# A) Anthropic（Claude 视觉）—— 有 key 时 auto 模式优先用
+VLM_PROVIDER=auto
+ANTHROPIC_API_KEY=sk-ant-xxx
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# B) OpenAI 兼容接口（LM Studio / 各类云）
+# VLM_PROVIDER=openai
+# VLM_API_URL=http://127.0.0.1:1234/v1/chat/completions
+# VLM_API_KEY=
+# VLM_MODEL=qwen3-vl-32b-instruct
+
+# C) 关闭 AI，纯启发式评分
+# VLM_PROVIDER=disabled
+```
+
+`VLM_PROVIDER` 取值：
+- `auto`（默认）：有 `ANTHROPIC_API_KEY` 用 Claude，否则用 OpenAI 兼容，都没有则启发式
+- `openai` / `anthropic`：强制指定
+- `disabled`：跳过 VLM，直接启发式评分
+
+VLM 调用失败（网络 / 限流 / 无 key）时自动降级启发式，不中断分析。
+
+## 2. 分析照片库
 
 ```bash
-# 1) 配置 VLM（可选，不配则用启发式评分）
-#    services/.env:
-#      VLM_ENABLED=true
-#      VLM_API_URL=http://127.0.0.1:1234/v1/chat/completions   # LM Studio / 云端
-#      VLM_API_KEY=
-#      VLM_MODEL=qwen3-vl-32b-instruct
-
-# 2) 扫描并分析（并发 4，断点续跑）
-python tools/analyze_photos.py /path/to/photos [-j 4] [--no-vlm]
+# 扫描并分析（并发 4，断点续跑）
+python tools/analyze_photos.py /path/to/photos [-j 4]
 ```
 
 每张照片产出：类型 / 回忆度 / 美观度 / 一句话文案 / 拍摄时间（EXIF）/ GPS，

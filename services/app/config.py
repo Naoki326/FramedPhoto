@@ -18,10 +18,16 @@ class Settings(BaseSettings):
 
     # AI 照片分析（VLM，OpenAI 兼容接口；不配置则走启发式评分）
     vlm_enabled: bool = True
-    vlm_api_url: str = ""
+    vlm_provider: str = "auto"     # auto | openai | anthropic | disabled
+    vlm_api_url: str = ""          # OpenAI 兼容接口（LM Studio / 云端）
     vlm_api_key: str = ""
     vlm_model: str = "qwen3-vl-32b-instruct"
     vlm_timeout: int = 600
+
+    # Anthropic（Claude 视觉）
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_base_url: str = "https://api.anthropic.com"
 
     # 每日精选
     photo_lib_dir: str = "./photos"      # 照片库目录（analyze_photos 扫描）

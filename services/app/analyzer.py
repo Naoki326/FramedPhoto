@@ -190,38 +190,106 @@ class VLMUnavailable(Exception):
     pass
 
 
-def _call_vlm(image_bytes: bytes) -> dict:
-    """调用 OpenAI 兼容 VLM，返回解析后的 JSON dict。"""
-    url = settings.vlm_api_url
-    if not url:
-        raise VLMUnavailable("VLM_API_URL not configured")
-
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    payload = {
-        "model": settings.vlm_model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": "请分析这张照片。"},
-            ]},
-        ],
-        "temperature": 0.7,
-        "max_tokens": 600,
-    }
-    headers = {"Content-Type": "application/json"}
-    if settings.vlm_api_key:
-        headers["Authorization"] = f"Bearer {settings.vlm_api_key}"
-
-    resp = requests.post(url, json=payload, headers=headers, timeout=settings.vlm_timeout)
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-
-    # 容错：从响应中提取 JSON 块
-    m = re.search(r"\{.*\}", content, re.S)
+def _parse_json_block(text: str) -> dict:
+    """容错：从模型响应中提取 JSON 块并解析。"""
+    m = re.search(r"\{.*\}", text, re.S)
     if not m:
         raise VLMUnavailable("VLM response contains no JSON")
     return json.loads(m.group(0))
+
+
+class OpenAICompatClient:
+    """OpenAI 兼容接口（/v1/chat/completions，LM Studio / 各类云服务）。"""
+
+    def __init__(self, url: str, api_key: str, model: str, timeout: int):
+        self.url, self.api_key, self.model, self.timeout = url, api_key, model, timeout
+
+    def analyze(self, image_bytes: bytes) -> dict:
+        if not self.url:
+            raise VLMUnavailable("VLM_API_URL not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    {"type": "text", "text": "请分析这张照片。"},
+                ]},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 600,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+        content = resp.json()["choices"][0]["message"]["content"]
+        return _parse_json_block(content)
+
+
+class AnthropicClient:
+    """Anthropic Messages API（Claude 视觉模型）。"""
+
+    def __init__(self, api_key: str, model: str, timeout: int, base_url: str = "https://api.anthropic.com"):
+        self.api_key, self.model, self.timeout = api_key, model, timeout
+        self.base_url = base_url.rstrip("/")
+
+    def analyze(self, image_bytes: bytes) -> dict:
+        if not self.api_key:
+            raise VLMUnavailable("ANTHROPIC_API_KEY not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "max_tokens": 600,
+            "system": SYSTEM_PROMPT,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64,
+                    }},
+                    {"type": "text", "text": "请分析这张照片。"},
+                ],
+            }],
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        resp = requests.post(f"{self.base_url}/v1/messages", json=payload,
+                             headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+        text = resp.json()["content"][0]["text"]
+        return _parse_json_block(text)
+
+
+def build_client() -> AnthropicClient | OpenAICompatClient | None:
+    """按 VLM_PROVIDER 决策返回客户端；无法使用时返回 None。
+
+    auto：有 ANTHROPIC_API_KEY 优先 Claude，其次 OpenAI 兼容，都没有则 None。
+    """
+    provider = settings.vlm_provider.strip().lower()
+    if provider == "disabled":
+        return None
+    if provider == "anthropic":
+        return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
+                               settings.vlm_timeout, settings.anthropic_base_url)
+    if provider == "openai":
+        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
+                                  settings.vlm_model, settings.vlm_timeout)
+    # auto
+    if settings.anthropic_api_key:
+        return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
+                               settings.vlm_timeout, settings.anthropic_base_url)
+    if settings.vlm_api_url:
+        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
+                                  settings.vlm_model, settings.vlm_timeout)
+    return None
 
 
 def analyze_image(path: str, use_vlm: bool | None = None) -> Analysis:
@@ -233,6 +301,10 @@ def analyze_image(path: str, use_vlm: bool | None = None) -> Analysis:
 
     if want_vlm:
         try:
+            client = build_client()
+            if client is None:
+                raise VLMUnavailable("no VLM configured (VLM_API_URL / ANTHROPIC_API_KEY)")
+
             with open(path, "rb") as f:
                 raw = f.read()
             # VLM 需要的图片控制在 2MB 内（base64 后 ~2.7MB）
@@ -243,7 +315,7 @@ def analyze_image(path: str, use_vlm: bool | None = None) -> Analysis:
                 img.save(buf, format="JPEG", quality=90)
                 raw = buf.getvalue()
 
-            result = _call_vlm(raw)
+            result = client.analyze(raw)
             return Analysis(
                 path=path, filename=filename, source="vlm",
                 description=str(result.get("description", "")).strip(),

@@ -9,9 +9,11 @@ from PIL import Image
 
 from app import db, daily
 from app.analyzer import (
+    AnthropicClient,
+    OpenAICompatClient,
     VLMUnavailable,
-    _call_vlm,
     analyze_image,
+    build_client,
     extract_exif,
     heuristic_score,
 )
@@ -67,9 +69,11 @@ def test_extract_exif_fallback_mtime():
 
 # ---------- VLM 调用 ----------
 
-def test_vlm_unavailable_without_config():
+def test_vlm_unavailable_without_config(monkeypatch):
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "openai")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "")
     with pytest.raises(VLMUnavailable):
-        _call_vlm(b"fake-image-bytes")
+        OpenAICompatClient("", "", "m", 10).analyze(b"fake-image")
 
 
 def test_analyze_image_heuristic_when_vlm_disabled(monkeypatch):
@@ -86,6 +90,7 @@ def test_analyze_image_vlm_fallback(monkeypatch):
     """VLM 失败时降级启发式，不抛异常。"""
     p = _make_photo(os.path.join(_tmp, "vf.png"))
     monkeypatch.setattr("app.analyzer.settings.vlm_enabled", True)
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "openai")
     monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "http://127.0.0.1:1/v1")
     a = analyze_image(p, use_vlm=True)
     assert a.source == "heuristic"
@@ -96,20 +101,85 @@ def test_analyze_image_vlm_success(monkeypatch):
     p = _make_photo(os.path.join(_tmp, "vs.png"))
     monkeypatch.setattr("app.analyzer.settings.vlm_enabled", True)
 
-    def fake_call(raw):
-        return {
-            "description": "海边日落",
-            "type": "风景",
-            "memory_score": 88,
-            "beauty_score": 90,
-            "caption": "那天傍晚的海",
-            "reason": "光影很美",
-        }
-    monkeypatch.setattr("app.analyzer._call_vlm", fake_call)
+    class FakeClient:
+        def analyze(self, raw):
+            return {
+                "description": "海边日落",
+                "type": "风景",
+                "memory_score": 88,
+                "beauty_score": 90,
+                "caption": "那天傍晚的海",
+                "reason": "光影很美",
+            }
+    monkeypatch.setattr("app.analyzer.build_client", lambda: FakeClient())
     a = analyze_image(p, use_vlm=True)
     assert a.source == "vlm"
     assert a.memory_score == 88
     assert a.caption == "那天傍晚的海"
+
+
+# ---------- Anthropic 客户端 ----------
+
+def _fake_anthropic_response(text: str):
+    class FakeResp:
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return {"content": [{"text": text}]}
+    return FakeResp()
+
+
+def test_anthropic_request_format(monkeypatch):
+    """Anthropic 请求：/v1/messages、x-api-key 头、image base64 结构。"""
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return _fake_anthropic_response('{"description":"猫","type":"宠物","memory_score":80,"beauty_score":70,"caption":"我家猫","reason":"可爱"}')
+
+    monkeypatch.setattr("app.analyzer.requests.post", fake_post)
+    client = AnthropicClient("sk-ant-test", "claude-sonnet-4-20250514", 60)
+    result = client.analyze(b"fake-image")
+
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    assert captured["headers"]["x-api-key"] == "sk-ant-test"
+    assert captured["headers"]["anthropic-version"] == "2023-06-01"
+    assert captured["json"]["model"] == "claude-sonnet-4-20250514"
+    assert captured["json"]["system"]  # 提示词
+    img = captured["json"]["messages"][0]["content"][0]
+    assert img["type"] == "image"
+    assert img["source"]["type"] == "base64"
+    assert img["source"]["media_type"] == "image/jpeg"
+    assert img["source"]["data"]
+    assert result["caption"] == "我家猫"
+
+
+def test_anthropic_no_key_raises():
+    with pytest.raises(VLMUnavailable):
+        AnthropicClient("", "m", 10).analyze(b"x")
+
+
+def test_provider_auto_prefers_anthropic(monkeypatch):
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "auto")
+    monkeypatch.setattr("app.analyzer.settings.anthropic_api_key", "sk-ant-test")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "http://127.0.0.1:1234/v1")
+    client = build_client()
+    assert isinstance(client, AnthropicClient)
+
+
+def test_provider_openai_explicit(monkeypatch):
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "openai")
+    monkeypatch.setattr("app.analyzer.settings.anthropic_api_key", "sk-ant-test")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "http://127.0.0.1:1234/v1")
+    client = build_client()
+    assert isinstance(client, OpenAICompatClient)
+
+
+def test_provider_disabled_returns_none(monkeypatch):
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "disabled")
+    assert build_client() is None
 
 
 # ---------- 文案渲染 ----------
