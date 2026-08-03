@@ -54,9 +54,10 @@ uvicorn app.main:app --reload
 ## 当前状态
 
 - [x] 仓库骨架与环境
-- [ ] GDEB0709E01 驱动（SPI 初始化 / 刷新序列）—— 待官方资料包确认命令表
+- [x] 官方资料下载归档（规格书 / 设计须知 / ESP32 示例源码，见 `docs/vendor/`）
+- [ ] M1：驱动移植（双 IC 命令序列 → gdey_epd）+ 点亮屏幕 —— **进行中**
 - [ ] 固件应用层（WiFi + 内容拉取 + 渲染）
-- [ ] 服务端图片转换（Spectra 6 色板量化 + 抖动）
+- [ ] 服务端图片转换格式对齐（4bit/像素，匹配设备端）
 - [ ] 设备管理与 OTA
 
 路线图见 [docs/roadmap.md](docs/roadmap.md)，架构设计见 [docs/architecture.md](docs/architecture.md)。
