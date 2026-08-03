@@ -252,6 +252,7 @@ static void display_task(void *arg)
 
 esp_err_t display_start(gdey_epd_dev_t *epd)
 {
-    BaseType_t ok = xTaskCreate(display_task, "display", 8192, epd, 5, NULL);
+    /* 固定 CPU1：刷屏/等 BUSY 会长时间占核，避免饿死 CPU0 的 IDLE0 watchdog */
+    BaseType_t ok = xTaskCreatePinnedToCore(display_task, "display", 8192, epd, 5, NULL, 1);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }

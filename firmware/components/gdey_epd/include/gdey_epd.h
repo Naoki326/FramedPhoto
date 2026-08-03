@@ -36,7 +36,7 @@ extern "C" {
 
 #define GDEY_EPD_MAX_CS 2
 
-#define EPD_BUSY_TIMEOUT_MS 5000
+#define EPD_BUSY_TIMEOUT_MS 120000
 #define EPD_ROW_DELAY_MS    1   /* 官方示例：每行发送后延时，防硬件过载 */
 
 typedef struct {
@@ -44,7 +44,7 @@ typedef struct {
     gpio_num_t        cs[GDEY_EPD_MAX_CS]; /**< 各驱动 IC 片选（手动 GPIO） */
     uint8_t           cs_count;          /**< 驱动 IC 数量（拼接屏为 2） */
     gpio_num_t        rst;               /**< 复位，低有效 */
-    gpio_num_t        busy;              /**< 忙指示（高=忙），GPIO_NUM_NC 跳过 */
+    gpio_num_t        busy;              /**< 忙指示（低=忙，BUSYN），GPIO_NUM_NC 跳过 */
     gpio_num_t        load_sw;           /**< 负载开关，GPIO_NUM_NC 跳过 */
     int               clock_hz;
 

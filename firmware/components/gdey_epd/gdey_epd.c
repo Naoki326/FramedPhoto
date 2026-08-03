@@ -83,12 +83,13 @@ esp_err_t gdey_epd_wait_busy(gdey_epd_dev_t *dev, uint32_t timeout_ms)
         return ESP_OK;
     }
     TickType_t start = xTaskGetTickCount();
-    while (gpio_get_level(dev->busy) == 1) { /* 高 = 忙 */
+    while (gpio_get_level(dev->busy) == 0) { /* 低 = 忙（BUSYN，官方 checkBusyHigh：等 BUSY 拉高） */
         if ((xTaskGetTickCount() - start) > pdMS_TO_TICKS(timeout_ms)) {
-            ESP_LOGW(TAG, "wait busy timeout (%lu ms)", (unsigned long)timeout_ms);
+            ESP_LOGW(TAG, "wait busy timeout (%lu ms), busy level=%d",
+                     (unsigned long)timeout_ms, gpio_get_level(dev->busy));
             return ESP_ERR_TIMEOUT;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
     return ESP_OK;
 }
