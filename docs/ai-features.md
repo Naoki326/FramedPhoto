@@ -8,27 +8,35 @@ FramedPhoto 的「AI 回忆相框」能力：分析照片库 → 评分 → 每�
 `services/.env`（从 `services/.env.example` 复制）：
 
 ```ini
-# A) Anthropic（Claude 视觉）—— 有 key 时 auto 模式优先用
-VLM_PROVIDER=auto
-ANTHROPIC_API_KEY=sk-ant-xxx
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+# A) OpenCode Go + gpt-5.6-luna（Responses API + 代理）
+VLM_PROVIDER=openai
+VLM_API_URL=https://opencode.ai/zen/go/v1
+VLM_API_MODE=responses        # gpt-5.x 等新模型必须用 /v1/responses
+VLM_API_KEY=sk-xxx
+VLM_MODEL=gpt-5.6-luna
+VLM_PROXY=http://127.0.0.1:7897  # OpenAI 模型有区域限制，需代理出口在
+                                 # 支持区域（美/日/新等；香港/大陆不可用）
 
-# B) OpenAI 兼容接口（LM Studio / 各类云）
+# B) Anthropic（Claude 视觉）—— 有 key 时 auto 模式优先用
+# VLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-xxx
+# ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# C) OpenAI 兼容接口（LM Studio / 国内云，无需代理）
 # VLM_PROVIDER=openai
+# VLM_API_MODE=chat
 # VLM_API_URL=http://127.0.0.1:1234/v1/chat/completions
-# VLM_API_KEY=
-# VLM_MODEL=qwen3-vl-32b-instruct
+# VLM_MODEL=qwen3.8-max
 
-# C) 关闭 AI，纯启发式评分
+# D) 关闭 AI，纯启发式评分
 # VLM_PROVIDER=disabled
 ```
 
-`VLM_PROVIDER` 取值：
-- `auto`（默认）：有 `ANTHROPIC_API_KEY` 用 Claude，否则用 OpenAI 兼容，都没有则启发式
-- `openai` / `anthropic`：强制指定
-- `disabled`：跳过 VLM，直接启发式评分
+`VLM_API_MODE`：`chat`（chat/completions）或 `responses`（/v1/responses）。
+GPT-5.x 等新模型仅支持 responses；URL 填 base（`.../v1`）或完整
+chat/completions 路径均可，客户端会自动规范。
 
-VLM 调用失败（网络 / 限流 / 无 key）时自动降级启发式，不中断分析。
+VLM 调用失败（网络 / 限流 / 无 key / 区域限制）时自动降级启发式，不中断分析。
 
 ## 2. 分析照片库
 

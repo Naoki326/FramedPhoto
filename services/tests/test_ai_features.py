@@ -11,6 +11,7 @@ from app import db, daily
 from app.analyzer import (
     AnthropicClient,
     OpenAICompatClient,
+    OpenAIResponsesClient,
     VLMUnavailable,
     analyze_image,
     build_client,
@@ -171,6 +172,7 @@ def test_provider_auto_prefers_anthropic(monkeypatch):
 
 def test_provider_openai_explicit(monkeypatch):
     monkeypatch.setattr("app.analyzer.settings.vlm_provider", "openai")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_mode", "chat")
     monkeypatch.setattr("app.analyzer.settings.anthropic_api_key", "sk-ant-test")
     monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "http://127.0.0.1:1234/v1")
     client = build_client()
@@ -180,6 +182,68 @@ def test_provider_openai_explicit(monkeypatch):
 def test_provider_disabled_returns_none(monkeypatch):
     monkeypatch.setattr("app.analyzer.settings.vlm_provider", "disabled")
     assert build_client() is None
+
+
+# ---------- Responses API 客户端 ----------
+
+def test_responses_request_format(monkeypatch):
+    """Responses API：/responses 端点、input_image 结构、instructions 提示词。"""
+    captured = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None, proxies=None):
+        captured["url"] = url
+        captured["json"] = json
+        captured["proxies"] = proxies
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return {"output": [{
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": (
+                        '{"description":"夜景","type":"城市","memory_score":77,'
+                        '"beauty_score":80,"caption":"灯影","reason":"氛围好"}')}],
+                }]}
+        return FakeResp()
+
+    monkeypatch.setattr("app.analyzer.requests.post", fake_post)
+    monkeypatch.setattr("app.analyzer.settings.vlm_proxy", "http://127.0.0.1:7897")
+
+    client = OpenAIResponsesClient("https://opencode.ai/zen/go/v1/chat/completions",
+                                   "sk-test", "gpt-5.6-luna", 60)
+    result = client.analyze(b"fake-image")
+
+    # chat/completions 完整 URL 应被规范为 /responses
+    assert captured["url"] == "https://opencode.ai/zen/go/v1/responses"
+    assert captured["json"]["model"] == "gpt-5.6-luna"
+    assert captured["json"]["instructions"]  # system 提示词
+    item = captured["json"]["input"][0]["content"][0]
+    assert item["type"] == "input_image"
+    assert item["image_url"].startswith("data:image/jpeg;base64,")
+    assert captured["proxies"]["https"] == "http://127.0.0.1:7897"
+    assert result["caption"] == "灯影"
+
+
+def test_responses_empty_content_raises(monkeypatch):
+    def fake_post(url, json=None, headers=None, timeout=None, proxies=None):
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return {"output": [{"type": "reasoning", "content": []}]}
+        return FakeResp()
+    monkeypatch.setattr("app.analyzer.requests.post", fake_post)
+    with pytest.raises(VLMUnavailable):
+        OpenAIResponsesClient("https://x/v1", "k", "m", 60).analyze(b"x")
+
+
+def test_provider_responses_mode(monkeypatch):
+    monkeypatch.setattr("app.analyzer.settings.vlm_provider", "openai")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_mode", "responses")
+    monkeypatch.setattr("app.analyzer.settings.vlm_api_url", "https://opencode.ai/zen/go/v1")
+    client = build_client()
+    assert isinstance(client, OpenAIResponsesClient)
+    assert client.url == "https://opencode.ai/zen/go/v1/responses"
 
 
 # ---------- 文案渲染 ----------

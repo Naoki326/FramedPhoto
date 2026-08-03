@@ -198,8 +198,15 @@ def _parse_json_block(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+def _proxies() -> dict | None:
+    """从配置构造 requests 代理（空则 None = 直连）。"""
+    if not settings.vlm_proxy:
+        return None
+    return {"http": settings.vlm_proxy, "https": settings.vlm_proxy}
+
+
 class OpenAICompatClient:
-    """OpenAI 兼容接口（/v1/chat/completions，LM Studio / 各类云服务）。"""
+    """OpenAI Chat Completions 接口（/v1/chat/completions）。"""
 
     def __init__(self, url: str, api_key: str, model: str, timeout: int):
         self.url, self.api_key, self.model, self.timeout = url, api_key, model, timeout
@@ -223,10 +230,65 @@ class OpenAICompatClient:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
+        resp = requests.post(self.url, json=payload, headers=headers,
+                             timeout=self.timeout, proxies=_proxies())
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
         return _parse_json_block(content)
+
+
+class OpenAIResponsesClient:
+    """OpenAI Responses API（/v1/responses）—— GPT-5.x 等新模型专用端点。
+
+    OpenCode Go 的 gpt-5.6-luna 仅在 responses 端点可用，且部分区域
+    需经代理访问。
+    """
+
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: int):
+        base_url = base_url.rstrip("/")
+        # 兼容完整 chat/completions URL 与 base URL 两种写法
+        if base_url.endswith("/chat/completions"):
+            base_url = base_url[: -len("/chat/completions")]
+        self.base_url = base_url
+        self.api_key, self.model, self.timeout = api_key, model, timeout
+
+    @property
+    def url(self) -> str:
+        return f"{self.base_url}/responses"
+
+    def analyze(self, image_bytes: bytes) -> dict:
+        if not self.api_key:
+            raise VLMUnavailable("VLM_API_KEY not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "instructions": SYSTEM_PROMPT,
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"},
+                    {"type": "input_text", "text": "请分析这张照片。"},
+                ],
+            }],
+            "max_output_tokens": 1000,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        resp = requests.post(self.url, json=payload, headers=headers,
+                             timeout=self.timeout, proxies=_proxies())
+        resp.raise_for_status()
+        data = resp.json()
+        # output 数组：找 type=message 的内容文本
+        text = ""
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for c in item.get("content", []):
+                    if c.get("type") == "output_text":
+                        text += c.get("text", "")
+        if not text:
+            raise VLMUnavailable("Responses API returned empty content")
+        return _parse_json_block(text)
 
 
 class AnthropicClient:
@@ -268,27 +330,34 @@ class AnthropicClient:
         return _parse_json_block(text)
 
 
-def build_client() -> AnthropicClient | OpenAICompatClient | None:
-    """按 VLM_PROVIDER 决策返回客户端；无法使用时返回 None。
+def build_client() -> AnthropicClient | OpenAICompatClient | OpenAIResponsesClient | None:
+    """按 VLM_PROVIDER / VLM_API_MODE 决策返回客户端；无法使用时返回 None。
 
     auto：有 ANTHROPIC_API_KEY 优先 Claude，其次 OpenAI 兼容，都没有则 None。
+    mode=responses 时返回 OpenAIResponsesClient（/v1/responses）。
     """
     provider = settings.vlm_provider.strip().lower()
     if provider == "disabled":
         return None
+
+    def _openai():
+        if settings.vlm_api_mode.strip().lower() == "responses":
+            return OpenAIResponsesClient(settings.vlm_api_url, settings.vlm_api_key,
+                                         settings.vlm_model, settings.vlm_timeout)
+        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
+                                  settings.vlm_model, settings.vlm_timeout)
+
     if provider == "anthropic":
         return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
                                settings.vlm_timeout, settings.anthropic_base_url)
     if provider == "openai":
-        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
-                                  settings.vlm_model, settings.vlm_timeout)
+        return _openai()
     # auto
     if settings.anthropic_api_key:
         return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
                                settings.vlm_timeout, settings.anthropic_base_url)
     if settings.vlm_api_url:
-        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
-                                  settings.vlm_model, settings.vlm_timeout)
+        return _openai()
     return None
 
 

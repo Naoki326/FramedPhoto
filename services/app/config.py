@@ -16,13 +16,15 @@ class Settings(BaseSettings):
     db_path: str = "./framedphoto.db"
     log_level: str = "INFO"
 
-    # AI 照片分析（VLM，OpenAI 兼容接口；不配置则走启发式评分）
+    # AI 照片分析（VLM）
     vlm_enabled: bool = True
     vlm_provider: str = "auto"     # auto | openai | anthropic | disabled
-    vlm_api_url: str = ""          # OpenAI 兼容接口（LM Studio / 云端）
+    vlm_api_mode: str = "chat"     # chat(chat/completions) | responses(/responses)
+    vlm_api_url: str = ""          # OpenAI 兼容接口（LM Studio / 云端 / OpenCode Go）
     vlm_api_key: str = ""
-    vlm_model: str = "qwen3-vl-32b-instruct"
+    vlm_model: str = "qwen3.8-max"
     vlm_timeout: int = 600
+    vlm_proxy: str = ""            # HTTP(S) 代理，如 http://127.0.0.1:7897（绕过区域限制时用）
 
     # Anthropic（Claude 视觉）
     anthropic_api_key: str = ""
