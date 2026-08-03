@@ -30,6 +30,25 @@ uvicorn app.main:app --reload
 
 测试：`cd services && .venv/bin/python -m pytest tests/ -q`
 
+## launchd 部署（macOS 开机自启 + 内网访问）
+
+```bash
+# 部署并启动（绑定 0.0.0.0，内网设备可访问，崩溃自动重启）
+./scripts/install_service.sh install
+
+# 常用命令
+./scripts/install_service.sh status     # 查看状态
+./scripts/install_service.sh restart    # 重启
+./scripts/install_service.sh uninstall  # 卸载
+
+# 日志：services/framedphoto.log
+# 访问：http://<本机内网IP>:8010（管理台）/ /health（健康检查）
+```
+
+> ⚠️ 重要：**项目不要放在 macOS 隐私保护目录**（`~/Documents`、`~/Desktop`、
+> `~/Downloads`）下，launchd 代理进程访问这些目录会被 TCC 拦截导致服务起不来。
+> 推荐放在 `~/FramedPhoto` 这类普通目录。
+
 ## 图片转换 CLI
 
 ```bash
