@@ -1,6 +1,6 @@
 # FramedPhoto 服务端 API
 
-基础地址：`http://<host>:8000`；Web 管理台：`GET /`（上传、内容库、设备、OTA）。
+基础地址：`http://<host>:8010`；Web 管理台：`GET /`（上传、内容库、设备、OTA）。
 
 ## 设备端接口（固件调用）
 

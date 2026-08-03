@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     app_host: str = "0.0.0.0"
-    app_port: int = 8000
+    app_port: int = 8010
 
     epd_width: int = 1200
     epd_height: int = 1600

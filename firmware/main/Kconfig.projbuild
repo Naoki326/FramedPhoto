@@ -12,7 +12,7 @@ menu "FramedPhoto Application"
 
     config FRAMEDPHOTO_SERVER_URL
         string "Service base URL"
-        default "http://192.168.1.100:8000"
+        default "http://192.168.1.100:8010"
         help
             服务端根地址，后续内容拉取 / 状态上报 / OTA 均以此为前缀。
 
