@@ -124,9 +124,21 @@ def render_daily() -> dict | None:
 
 
 def daily_is_fresh(ttl_seconds: int = 20 * 3600) -> bool:
-    """今天的每日精选是否已生成（避免频繁重渲染）。"""
-    return (DAILY_FILE.exists() and DAILY_META.exists()
-            and (db.now() - DAILY_FILE.stat().st_mtime) < ttl_seconds)
+    """今日精选是否已生成（按自然日判断：渲染日期为今天才算新鲜）。
+
+    每天 0 点后第一次调用即重新渲染，实现“每天换一张”。
+    """
+    if not (DAILY_FILE.exists() and DAILY_META.exists()):
+        return False
+    meta = load_daily_meta()
+    if not meta:
+        return False
+    rendered = meta.get("rendered_at")
+    if not rendered:
+        return False
+    today_str = dt.datetime.now().strftime("%Y%m%d")
+    rendered_str = dt.datetime.fromtimestamp(rendered).strftime("%Y%m%d")
+    return rendered_str == today_str
 
 
 def load_daily_meta() -> dict | None:
