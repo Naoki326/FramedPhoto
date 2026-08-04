@@ -76,6 +76,38 @@ async def get_daily_raw():
     return Response(content=daily.DAILY_FILE.read_bytes(), media_type="application/octet-stream")
 
 
+@router.get("/daily/selected")
+async def daily_selected():
+    """当前手动指定的今日照片（无则 null）。"""
+    from app.runtime_config import load
+    m = load().get("daily_manual") or {}
+    return {"path": m.get("path", ""), "date": m.get("date", "")}
+
+
+@router.post("/daily/select")
+async def daily_select(body: dict):
+    """手动指定今日精选照片（当日有效，次日恢复自动）。"""
+    from datetime import datetime as _dt
+    from pathlib import Path as _P
+    from app import runtime_config
+    from app.config import settings as _s
+    path = (body.get("path") or "").strip()
+    root = _P(_s.photo_lib_dir).resolve()
+    p = _P(path).resolve()
+    if not str(p).startswith(str(root)) or not p.is_file():
+        raise HTTPException(404, "photo not found")
+    runtime_config.save({"daily_manual": {"path": str(p), "date": _dt.now().strftime("%Y-%m-%d")}})
+    return {"ok": True, "path": str(p)}
+
+
+@router.delete("/daily/select")
+async def daily_unselect():
+    """取消手动指定，恢复自动选片。"""
+    from app import runtime_config
+    runtime_config.save({"daily_manual": {}})
+    return {"ok": True}
+
+
 @router.get("/daily/preview")
 async def get_daily_preview():
     meta = daily.ensure_daily()

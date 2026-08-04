@@ -20,6 +20,7 @@ ALLOWED_KEYS = {
     "news_source",          # 60s | zhipu
     "qweather_city",        # 城市显示名（空 = IP 自动定位）
     "qweather_location",    # 和风 location（空 = IP 自动定位）
+    "daily_manual",         # 手动指定今日精选 {path, date}
 }
 
 

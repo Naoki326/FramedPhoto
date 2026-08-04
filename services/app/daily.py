@@ -73,9 +73,27 @@ def select_daily_photo() -> tuple[dict | None, bool]:
     return _weighted_choice(top), False
 
 
+def daily_manual_pick() -> dict | None:
+    """管理台手动指定的今日照片（当日有效）。"""
+    from app.runtime_config import load
+    m = load().get("daily_manual") or {}
+    if not m.get("path"):
+        return None
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    if m.get("date") != today:
+        return None
+    photo = db.get_photo_score(m["path"])
+    if not photo or not Path(photo["path"]).exists():
+        return None
+    return photo, True
+
+
 def render_daily() -> dict | None:
-    """选片 → 渲染 FPS6（带文案）→ 返回元数据；无可用照片返回 None。"""
-    photo, is_today_match = select_daily_photo()
+    """选片 → 渲染 FPS6（带文案）→ 返回元数据；无可用照片返回 None。
+
+    手动指定（管理台「设为今日精选」）优先，其次自动选片。
+    """
+    photo, is_today_match = daily_manual_pick() or select_daily_photo()
     if not photo:
         return None
     path = photo["path"]
@@ -127,6 +145,7 @@ def daily_is_fresh(ttl_seconds: int = 20 * 3600) -> bool:
     """今日精选是否已生成（按自然日判断：渲染日期为今天才算新鲜）。
 
     每天 0 点后第一次调用即重新渲染，实现“每天换一张”。
+    手动指定今日精选后若与当前渲染不一致，强制重渲染。
     """
     if not (DAILY_FILE.exists() and DAILY_META.exists()):
         return False
@@ -138,7 +157,13 @@ def daily_is_fresh(ttl_seconds: int = 20 * 3600) -> bool:
         return False
     today_str = dt.datetime.now().strftime("%Y%m%d")
     rendered_str = dt.datetime.fromtimestamp(rendered).strftime("%Y%m%d")
-    return rendered_str == today_str
+    if rendered_str != today_str:
+        return False
+    # 手动指定与当前渲染不一致 → 需要重渲染
+    manual = daily_manual_pick()
+    if manual and meta.get("path") != manual[0]["path"]:
+        return False
+    return True
 
 
 def load_daily_meta() -> dict | None:

@@ -67,11 +67,9 @@
   </section>
 
   <section>
-    <h2>照片评分（AI 分析）</h2>
-    <table>
-      <thead><tr><th>照片</th><th>类型</th><th>回忆度</th><th>美观度</th><th>文案</th><th>来源</th></tr></thead>
-      <tbody id="scores"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
-    </table>
+    <h2>照片库（设为今日精选）</h2>
+    <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+    <div class="grid" id="scores"><div class="empty">加载中…</div></div>
     <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
   </section>
 
@@ -200,20 +198,43 @@ async function loadDaily() {
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
 }
 async function loadScores() {
-  const tbody = $('scores');
+  const box = $('scores');
   try {
-    const r = await fetch('/api/analysis/scores');
+    const r = await fetch('/api/analysis/scores?limit=60');
     const { scores } = await r.json();
-    if (!scores.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无分析数据</td></tr>'; return; }
-    tbody.innerHTML = scores.map(s => `<tr>
-      <td title="${s.path}">${s.filename}</td>
-      <td>${s.type || '—'}</td>
-      <td>${s.memory_score?.toFixed?.(0) ?? '—'}</td>
-      <td>${s.beauty_score?.toFixed?.(0) ?? '—'}</td>
-      <td>${s.caption || '—'}</td>
-      <td>${s.source === 'vlm' ? '<span class="pill">AI</span>' : '启发式'}</td>
-    </tr>`).join('');
-  } catch (_) { tbody.innerHTML = '<tr><td colspan="6" class="empty">—</td></tr>'; }
+    if (!scores.length) { box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>'; return; }
+    box.innerHTML = scores.map(s => `
+      <div class="card">
+        <img src="/api/analysis/preview?path=${encodeURIComponent(s.path)}" loading="lazy"
+             style="cursor:pointer" onclick="pickDaily('${encodeURIComponent(s.path)}')" title="点击设为今日精选">
+        <div class="meta">
+          <b title="${s.path}">${s.filename || ''}</b>
+          <div class="row"><span>回忆 ${s.memory_score?.toFixed?.(0) ?? '—'}</span>
+            <button onclick="pickDaily('${encodeURIComponent(s.path)}')">设为今日</button></div>
+        </div>
+      </div>`).join('');
+  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+}
+async function loadManualPick() {
+  try {
+    const d = await api('/images/daily/selected');
+    if (d.path) {
+      $('manualPick').innerHTML = `✅ 今日手动指定：<b>${d.path.split('/').pop()}</b>（次日恢复自动选片）
+        <button onclick="unpickDaily()" style="margin-left:8px;background:#f3f4f6;color:#dc2626">取消手动</button>`;
+    } else {
+      $('manualPick').innerHTML = '自动选片模式（点击下方照片设为今日精选）';
+    }
+  } catch (_) {}
+}
+async function pickDaily(pathEnc) {
+  const path = decodeURIComponent(pathEnc);
+  if (!confirm('设为今日精选？设备下次刷新将显示这张')) return;
+  try { await api('/images/daily/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    toast('已设为今日精选'); loadManualPick(); loadDaily(); } catch (e) { toast('失败: ' + e.message); }
+}
+async function unpickDaily() {
+  try { await api('/images/daily/select', { method: 'DELETE' }); toast('已恢复自动选片'); loadManualPick(); loadDaily(); }
+  catch (e) { toast('失败: ' + e.message); }
 }
 async function loadSync() {
   const box = $('syncbox');
@@ -402,7 +423,7 @@ async function saveWifiConfig() {
   btn.disabled = false;
 }
 
-loadHealth(); loadSync(); loadDaily(); loadScores(); loadImages(); loadDevices(); loadFw();
+loadHealth(); loadSync(); loadDaily(); loadScores(); loadManualPick(); loadImages(); loadDevices(); loadFw();
 loadSettings();
 setInterval(loadDevices, 15000);
 setInterval(loadDaily, 600000);
