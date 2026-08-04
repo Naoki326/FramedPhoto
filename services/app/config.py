@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     slot_news: str = "21:00-24:00"
     slot_weather_enabled: bool = True
     slot_news_enabled: bool = True
+    news_source: str = "60s"          # zhipu | 60s
 
     # 天气（和风天气）
     qweather_key: str = ""

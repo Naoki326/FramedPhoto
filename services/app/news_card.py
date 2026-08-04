@@ -30,7 +30,7 @@ NEWS_COUNT = 5  # 卡片展示条数
 NEWS_API = "https://60s.viki.moe/v2/60s"
 
 
-def fetch_top_news() -> list[str] | None:
+def _fetch_60s() -> list[str] | None:
     """60s API：返回当天热点新闻列表。失败返回 None。"""
     try:
         r = requests.get(NEWS_API, timeout=15)
@@ -42,6 +42,41 @@ def fetch_top_news() -> list[str] | None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("fetch_top_news failed: %s", exc.__class__.__name__)
         return None
+
+
+# 智谱 MCP 搜索的分领域 query（泛化新闻词会被内容过滤拦截，分领域更稳）
+ZHIPU_QUERIES = ["今日体育新闻", "今日财经新闻", "今日科技新闻", "今日娱乐新闻", "今日健康新闻"]
+
+
+def _fetch_zhipu() -> list[str] | None:
+    """智谱 MCP 分领域搜索合并去重。被过滤/失败返回 None。"""
+    from app.zhipu_mcp import search_news
+    key = settings.zhipu_api_key
+    if not key:
+        return None
+    titles, seen = [], set()
+    for q in ZHIPU_QUERIES:
+        items = search_news(key, q, count=4)
+        if not items:
+            continue
+        for it in items:
+            t = it.get("title", "").strip()
+            if t and len(t) > 2 and t not in seen:
+                seen.add(t)
+                titles.append(t)
+        if len(titles) >= NEWS_COUNT:
+            break
+    return titles[:NEWS_COUNT] or None
+
+
+def fetch_top_news() -> list[str] | None:
+    """热点新闻：NEWS_SOURCE=zhipu 时优先智谱 MCP，否则/失败降级 60s API。"""
+    if settings.news_source == "zhipu":
+        t = _fetch_zhipu()
+        if t:
+            return t
+        logger.info("zhipu news empty, fallback 60s")
+    return _fetch_60s()
 
 
 def _generate_cartoon(prompt: str) -> bytes | None:
