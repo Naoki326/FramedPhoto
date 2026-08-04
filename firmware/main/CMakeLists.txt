@@ -2,9 +2,11 @@ idf_component_register(
     SRCS
         "app_main.c"
         "wifi_app.c"
+        "wifi_config.c"
+        "device_client.c"
         "display.c"
         "content_client.c"
     INCLUDE_DIRS "."
-    REQUIRES gdey_epd esp_http_client cjson
-    PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_timer spiffs esp_app_format log
+    REQUIRES gdey_epd esp_http_client esp_http_server cjson
+    PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_timer spiffs esp_app_format log esp_hw_support
 )

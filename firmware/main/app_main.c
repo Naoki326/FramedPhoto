@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "gdeb0709e01.h"
 #include "wifi_app.h"
+#include "wifi_config.h"
 #include "display.h"
 
 static const char *TAG = "app_main";
@@ -34,7 +35,11 @@ void app_main(void)
 
     /* 3. WiFi（失败不阻塞启动，显示任务会继续） */
     err = wifi_app_start();
-    if (err != ESP_OK) {
+    if (err == ESP_ERR_INVALID_STATE) {
+        /* 无有效凭据：先 SmartConfig 监听（服务端/App 广播配网，不断网），超时后自动开 AP 兑底 */
+        ESP_LOGW(TAG, "no wifi credentials, starting smartconfig provisioning");
+        wifi_config_start_smartconfig();
+    } else if (err != ESP_OK) {
         ESP_LOGW(TAG, "wifi start deferred: %s", esp_err_to_name(err));
     }
 

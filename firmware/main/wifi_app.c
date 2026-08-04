@@ -2,6 +2,7 @@
  * wifi_app.c — WiFi STA 连接管理
  *
  * 凭据来源优先级：NVS ("wifi" namespace) > menuconfig 默认值。
+ * 无有效凭据时只初始化 WiFi 栈、不启动 STA，由 app_main 决定开配网热点。
  */
 #include <string.h>
 #include "esp_check.h"
@@ -66,20 +67,46 @@ static esp_err_t load_credentials(char *ssid, size_t ssid_len, char *pass, size_
     return ESP_OK;
 }
 
+static bool credentials_valid(const char *ssid)
+{
+    return ssid[0] != '\0' && strcmp(ssid, "your_ssid") != 0;
+}
+
+bool wifi_app_has_credentials(void)
+{
+    char ssid[33];
+    char pass[65];
+    load_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
+    return credentials_valid(ssid);
+}
+
+esp_err_t wifi_app_save_credentials(const char *ssid, const char *pass)
+{
+    if (ssid == NULL || strlen(ssid) == 0 || strlen(ssid) >= 32 || strlen(pass) >= 64) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    ESP_RETURN_ON_ERROR(nvs_open("wifi", NVS_READWRITE, &h), TAG, "nvs open");
+    esp_err_t err = nvs_set_str(h, "ssid", ssid);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, "pass", pass);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    ESP_RETURN_ON_ERROR(err, TAG, "save credentials");
+    ESP_LOGI(TAG, "credentials saved to NVS: '%s'", ssid);
+    return ESP_OK;
+}
+
 esp_err_t wifi_app_start(void)
 {
     if (s_wifi_events == NULL) {
         s_wifi_events = xEventGroupCreate();
     }
 
-    char ssid[33], pass[65];
-    load_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
-    if (strlen(ssid) == 0 || strcmp(ssid, "your_ssid") == 0) {
-        ESP_LOGW(TAG, "WiFi credentials not configured (NVS or menuconfig)");
-        xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
-        return ESP_ERR_INVALID_STATE;
-    }
-
+    /* WiFi 栈总是初始化（STA 与配网 AP 共用） */
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif init failed");
     ESP_RETURN_ON_ERROR(esp_event_loop_create_default(), TAG, "event loop failed");
     esp_netif_create_default_wifi_sta();
@@ -92,6 +119,14 @@ esp_err_t wifi_app_start(void)
     ESP_RETURN_ON_ERROR(
         esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL),
         TAG, "ip event register failed");
+
+    char ssid[33], pass[65];
+    load_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
+    if (!credentials_valid(ssid)) {
+        ESP_LOGW(TAG, "WiFi credentials not configured (NVS or menuconfig)");
+        xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     wifi_config_t wc = {
         .sta = {

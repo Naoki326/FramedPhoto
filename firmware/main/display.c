@@ -18,6 +18,7 @@
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "esp_sleep.h"
+#include "device_client.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -182,6 +183,9 @@ static esp_err_t mount_storage(void)
 
 static esp_err_t update_from_server(void)
 {
+    /* 心跳上报 + 处理服务端下发的 WiFi 配置（失败不阻塞内容流程） */
+    device_client_heartbeat();
+
     char id[64];
     esp_err_t err = content_fetch_current_id(id, sizeof(id));
     if (err != ESP_OK) {

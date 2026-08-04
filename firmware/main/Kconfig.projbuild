@@ -1,5 +1,9 @@
 menu "FramedPhoto Application"
 
+    config FRAMEDPHOTO_FW_VERSION
+        string "Firmware version reported to server"
+        default "0.1.0-dev"
+
     config FRAMEDPHOTO_WIFI_SSID
         string "WiFi SSID"
         default "your_ssid"
