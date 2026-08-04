@@ -97,6 +97,18 @@ async def get_raw(img_id: str):
             raise HTTPException(404, "no daily photo")
         return Response(content=daily.DAILY_FILE.read_bytes(),
                         media_type="application/octet-stream")
+    if img_id.startswith("news-"):
+        from app.news_card import render_news_fps6
+        data = render_news_fps6()
+        if not data:
+            raise HTTPException(404, "no news card")
+        return Response(content=data, media_type="application/octet-stream")
+    if img_id.startswith("weather-"):
+        from app.weather_card import render_weather_card
+        data = render_weather_card()
+        if not data:
+            raise HTTPException(404, "no weather card")
+        return Response(content=data, media_type="application/octet-stream")
     meta = _get_or_404(img_id)
     data = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
     return Response(content=data, media_type="application/octet-stream")
@@ -123,43 +135,123 @@ async def delete_image(img_id: str):
     return {"ok": True, "deleted": img_id}
 
 
+@router.get("/news/raw")
+async def get_news_raw():
+    from app.news_card import render_news_fps6
+    data = render_news_fps6()
+    if not data:
+        raise HTTPException(503, "news unavailable")
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@router.get("/news/preview")
+async def get_news_preview():
+    from app.news_card import render_news_fps6
+    data = render_news_fps6()
+    if not data:
+        raise HTTPException(503, "news unavailable")
+    w, h = struct.unpack_from("<II", data, 4)
+    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    return Response(content=preview_png(prepared), media_type="image/png")
+
+
+@router.get("/weather/raw")
+async def get_weather_raw():
+    from app.weather_card import render_weather_card
+    data = render_weather_card()
+    if not data:
+        raise HTTPException(503, "weather unavailable")
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@router.get("/weather/preview")
+async def get_weather_preview():
+    from app.weather_card import render_weather_card
+    data = render_weather_card()
+    if not data:
+        raise HTTPException(503, "weather unavailable")
+    w, h = struct.unpack_from("<II", data, 4)
+    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    return Response(content=preview_png(prepared), media_type="image/png")
+
+
 @router.get("/content")
 async def content_list(device_id: str | None = None):
     """内容清单：设备轮询此接口。
 
-    优先级：手动上传的最新一张 > 每日精选（AI 评分 + 历史上的今天）。
+    按时段编排分发（见 app.slots）：
+      slot_weather 时段 → 天气+日历卡片（QWEATHER_KEY 未配/失败时回退照片）
+      slot_photo    时段 → 每日精选照片
+      slot_news     时段 → 热点新闻卡通卡片（依赖未配置时回退照片）
     可附带设备 id 上报状态。
     """
-    result = []
-    source = "manual"
+    from app import slots
+    from app.weather_card import render_weather_slot
 
-    manual = db.list_images()
-    if manual:
-        m = manual[0]
-        result.append({
-            "id": m["id"],
-            "filename": m["filename"],
-            "width": m["width"],
-            "height": m["height"],
-            "created_at": m["created_at"],
-            "url": f"/api/images/{m['id']}/raw",
-            "preview_url": f"/api/images/{m['id']}/preview",
-        })
-    else:
-        meta = daily.ensure_daily()
+    slot = slots.current_slot()
+    result = []
+    source = slot
+
+    if slot == slots.SLOT_WEATHER:
+        meta = render_weather_slot()
         if meta:
-            source = "daily"
             result.append({
-                "id": meta.get("id", "daily"),
+                "id": meta["id"],
                 "filename": meta.get("filename", ""),
                 "caption": meta.get("caption", ""),
                 "date": meta.get("date", ""),
-                "memory_score": meta.get("memory_score"),
+                "memory_score": None,
                 "width": meta["width"],
                 "height": meta["height"],
-                "url": "/api/images/daily/raw",
-                "preview_url": "/api/images/daily/preview",
+                "url": "/api/images/weather/raw",
+                "preview_url": "/api/images/weather/preview",
             })
+    elif slot == slots.SLOT_NEWS:
+        from app.news_card import render_news_slot
+        meta = render_news_slot()
+        if meta:
+            result.append({
+                "id": meta["id"],
+                "filename": meta.get("filename", ""),
+                "caption": meta.get("caption", ""),
+                "date": meta.get("date", ""),
+                "memory_score": None,
+                "width": meta["width"],
+                "height": meta["height"],
+                "url": "/api/images/news/raw",
+                "preview_url": "/api/images/news/preview",
+            })
+
+    if not result:
+        # 照片时段，或天气/新闻不可用时的回退
+        manual = db.list_images()
+        if manual:
+            m = manual[0]
+            source = "manual"
+            result.append({
+                "id": m["id"],
+                "filename": m["filename"],
+                "width": m["width"],
+                "height": m["height"],
+                "created_at": m["created_at"],
+                "url": f"/api/images/{m['id']}/raw",
+                "preview_url": f"/api/images/{m['id']}/preview",
+            })
+        else:
+            meta = daily.ensure_daily()
+            if meta:
+                source = "daily"
+                result.append({
+                    "id": meta.get("id", "daily"),
+                    "filename": meta.get("filename", ""),
+                    "caption": meta.get("caption", ""),
+                    "date": meta.get("date", ""),
+                    "memory_score": meta.get("memory_score"),
+                    "width": meta["width"],
+                    "height": meta["height"],
+                    "url": "/api/images/daily/raw",
+                    "preview_url": "/api/images/daily/preview",
+                })
 
     # 设备附带上报心跳（与 /heartbeat 等价，减少一次请求）
     if device_id:

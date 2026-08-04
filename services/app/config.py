@@ -38,5 +38,25 @@ class Settings(BaseSettings):
     daily_photo_quantity: int = 1          # 每日生成精选张数（设备取第一张）
     memory_threshold: float = 55.0         # 启发式回忆度阈值别名（保留兼容）
 
+    # 时段编排（24h 三时段：天气卡片 / 每日照片 / 新闻卡片，HH:MM-HH:MM）
+    slot_weather: str = "00:00-10:00"
+    slot_photo: str = "10:00-21:00"
+    slot_news: str = "21:00-24:00"
+    slot_weather_enabled: bool = True
+    slot_news_enabled: bool = True
+
+    # 天气（和风天气）
+    qweather_key: str = ""
+    qweather_location: str = "101010100"   # 城市 ID（北京），可在和风控制台查询
+
+    # 新闻（智谱 GLM web search）
+    zhipu_api_key: str = ""
+    zhipu_model: str = "glm-4-flash"
+
+    # 文生图（用户提供，兼容 OpenAI 图片接口或自定义）
+    imagegen_url: str = ""
+    imagegen_key: str = ""
+    imagegen_model: str = ""
+
 
 settings = Settings()

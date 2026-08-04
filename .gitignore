@@ -36,3 +36,6 @@ uploads/
 **/ota/
 *.db
 framedphoto.db*
+# NAS 同步照片（不入库，本地数据）
+services/photos/
+services/daily/
