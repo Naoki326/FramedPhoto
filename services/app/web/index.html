@@ -33,6 +33,11 @@
   .pill.offline { background: #fee2e2; color: #991b1b; }
   #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
   #toast.show { opacity: .95; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
+  .modal-box { background: #fff; border-radius: 10px; padding: 20px 22px; width: 340px; box-shadow: 0 8px 30px rgba(0,0,0,.2); }
+  .modal-box h3 { margin: 0 0 4px; font-size: 15px; }
+  .modal-box button { margin-right: 8px; }
+  .modal-box button:last-child { margin-right: 0; }
 </style>
 </head>
 <body>
@@ -72,9 +77,13 @@
 
   <section>
     <h2>设备</h2>
+    <div style="margin-bottom:10px">
+      <button onclick="openScModal()">📡 SmartConfig 配网（不断网）</button>
+      <span style="font-size:12px;color:#9ca3af;margin-left:8px">设备未配网/连不上时，在局域网广播 WiFi 配置，设备自动连接</span>
+    </div>
     <table>
-      <thead><tr><th>设备 ID</th><th>固件</th><th>当前内容</th><th>电量</th><th>最后心跳</th></tr></thead>
-      <tbody id="devices"><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+      <thead><tr><th>设备 ID</th><th>固件</th><th>当前内容</th><th>电量</th><th>最后心跳</th><th>WiFi</th></tr></thead>
+      <tbody id="devices"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
     </table>
   </section>
 
@@ -89,6 +98,48 @@
   </section>
 </main>
 <div id="toast"></div>
+
+<!-- SmartConfig 配网弹窗 -->
+<div id="scModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <h3>📡 SmartConfig 配网</h3>
+    <p style="font-size:12px;color:#9ca3af;margin:4px 0 12px">将当前 WiFi 配置广播给设备（约 6 秒），设备收到后自动连接。本机网络不受影响。</p>
+    <label style="font-size:13px">SSID
+      <input type="text" id="scSsid" placeholder="WiFi 名称" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;margin-top:4px">
+    </label>
+    <label style="font-size:13px;display:block;margin-top:10px">密码
+      <input type="password" id="scPass" placeholder="WiFi 密码" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;margin-top:4px">
+    </label>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+      <button onclick="useLocalWifi()" style="background:#f3f4f6;color:#374151">用本机 WiFi 填充</button>
+      <div>
+        <button onclick="closeScModal()" style="background:#f3f4f6;color:#374151">取消</button>
+        <button onclick="sendSmartConfig()" id="scSendBtn">发送</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- WiFi 配置弹窗 -->
+<div id="wifiModal" class="modal" style="display:none">
+  <div class="modal-box">
+    <h3>WiFi 配置 · <span id="wifiDevId"></span></h3>
+    <p style="font-size:12px;color:#9ca3af;margin:4px 0 12px">保存后设备下一次心跳时自动拉取并重启连接新网络（需设备已在线）</p>
+    <label style="font-size:13px">SSID
+      <input type="text" id="wifiSsid" placeholder="WiFi 名称" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;margin-top:4px">
+    </label>
+    <label style="font-size:13px;display:block;margin-top:10px">密码
+      <input type="password" id="wifiPass" placeholder="WiFi 密码" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;margin-top:4px">
+    </label>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+      <button onclick="useLocalWifi()" style="background:#f3f4f6;color:#374151">用本机 WiFi 填充</button>
+      <div>
+        <button onclick="closeWifiModal()" style="background:#f3f4f6;color:#374151">取消</button>
+        <button onclick="saveWifiConfig()" id="wifiSaveBtn">保存下发</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -191,7 +242,7 @@ async function loadImages() {
 async function loadDevices() {
   const { devices } = await api('/devices');
   const tbody = $('devices');
-  if (!devices.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无设备</td></tr>'; return; }
+  if (!devices.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无设备</td></tr>'; return; }
   const now = Date.now() / 1000;
   tbody.innerHTML = devices.map(d => {
     const online = d.last_seen && (now - d.last_seen) < 300;
@@ -201,6 +252,10 @@ async function loadDevices() {
       <td>${d.current_image ? d.current_image.slice(0, 12) : '—'}</td>
       <td>${d.battery >= 0 ? d.battery.toFixed(0) + '%' : '—'}</td>
       <td>${timeAgo(d.last_seen)}</td>
+      <td>
+        ${d.wifi_pending ? '<span class="pill">待下发</span> ' : ''}
+        <button onclick="openWifiModal('${d.id}', '${d.wifi_ssid || ''}')">设置</button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -238,6 +293,61 @@ async function uploadFw() {
   const btn = $('fwBtn'); btn.disabled = true;
   try { const m = await api('/ota/upload', { method: 'POST', body: fd }); toast(`固件 v${m.version} 已发布`); loadFw(); }
   catch (e) { toast('发布失败: ' + e.message); }
+  btn.disabled = false;
+}
+
+/* ---- WiFi 配网（管理台推送） ---- */
+let wifiEditingId = '';
+function openScModal() {
+  $('scSsid').value = ''; $('scPass').value = '';
+  useLocalWifi();
+  $('scModal').style.display = 'flex';
+}
+function closeScModal() { $('scModal').style.display = 'none'; }
+async function sendSmartConfig() {
+  const ssid = $('scSsid').value.trim();
+  if (!ssid) return toast('SSID 不能为空');
+  const btn = $('scSendBtn'); btn.disabled = true; btn.textContent = '发送中…';
+  try {
+    await api('/devices/smartconfig', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid, password: $('scPass').value }),
+    });
+    toast(`已广播 ${ssid}，等待设备自动连接（约 1 分钟）`);
+    closeScModal();
+  } catch (e) { toast('发送失败: ' + e.message); }
+  btn.disabled = false; btn.textContent = '发送';
+}
+function openWifiModal(id, ssid) {
+  wifiEditingId = id;
+  $('wifiDevId').textContent = id;
+  $('wifiSsid').value = ssid || '';
+  $('wifiPass').value = '';
+  $('wifiModal').style.display = 'flex';
+}
+function closeWifiModal() { $('wifiModal').style.display = 'none'; }
+async function useLocalWifi() {
+  try {
+    const w = await api('/devices/local-wifi');
+    $('wifiSsid').value = w.ssid;
+    $('wifiPass').value = w.password || '';
+    toast(w.password ? '已填入本机 WiFi（含钥匙串密码）' : '已填入本机 WiFi SSID（密码未读取到，请手输）');
+  } catch (e) { toast('读取本机 WiFi 失败: ' + e.message); }
+}
+async function saveWifiConfig() {
+  const ssid = $('wifiSsid').value.trim();
+  if (!ssid) return toast('SSID 不能为空');
+  const btn = $('wifiSaveBtn'); btn.disabled = true;
+  try {
+    await api('/devices/' + wifiEditingId + '/wifi-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid, password: $('wifiPass').value }),
+    });
+    toast(`已下发 WiFi 配置，等待设备 ${wifiEditingId} 拉取`);
+    closeWifiModal(); loadDevices();
+  } catch (e) { toast('保存失败: ' + e.message); }
   btn.disabled = false;
 }
 

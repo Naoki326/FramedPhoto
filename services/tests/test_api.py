@@ -159,3 +159,61 @@ def test_ota_upload_and_manifest():
 def test_ota_reject_non_firmware():
     r = client.post("/api/ota/upload", files={"file": ("x.bin", b"plain text", "application/octet-stream")})
     assert r.status_code == 422
+
+
+# ---------- WiFi 配置下发 ----------
+
+def test_wifi_config_set_and_deliver():
+    client.post("/api/devices/register", json={"device_id": "wifi-dev-1"})
+
+    # 设置 WiFi 配置 → pending
+    r = client.put("/api/devices/wifi-dev-1/wifi-config", json={"ssid": "Home-5G", "password": "secret"})
+    assert r.status_code == 200
+    dev = client.get("/api/devices/wifi-dev-1").json()
+    assert dev["wifi_ssid"] == "Home-5G"
+    assert dev["wifi_pending"] == 1
+
+    # 心跳 → 响应携带配置
+    r = client.post("/api/devices/wifi-dev-1/heartbeat", json={"firmware_version": "0.1.0"})
+    body = r.json()
+    assert body["wifi_config"]["ssid"] == "Home-5G"
+    assert body["wifi_config"]["password"] == "secret"
+
+    # 设备应用后心跳（带确认）→ pending 清除，不再下发
+    r = client.post("/api/devices/wifi-dev-1/heartbeat",
+                    json={"wifi_config_applied": True})
+    assert "wifi_config" not in r.json()
+    assert client.get("/api/devices/wifi-dev-1").json()["wifi_pending"] == 0
+
+
+def test_wifi_config_unknown_device_404():
+    r = client.put("/api/devices/nope/wifi-config", json={"ssid": "x", "password": ""})
+    assert r.status_code == 404
+
+
+def test_wifi_config_reject_empty_ssid():
+    client.post("/api/devices/register", json={"device_id": "wifi-dev-2"})
+    r = client.put("/api/devices/wifi-dev-2/wifi-config", json={"ssid": "", "password": ""})
+    assert r.status_code == 422
+
+
+# ---------- SmartConfig 配网 ----------
+
+def test_smartconfig_provision():
+    r = client.post("/api/devices/smartconfig", json={"ssid": "Home-5G", "password": "secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is True
+    assert body["ssid"] == "Home-5G"
+
+
+def test_smartconfig_reject_empty_ssid():
+    r = client.post("/api/devices/smartconfig", json={"ssid": "", "password": ""})
+    assert r.status_code == 422
+
+
+def test_esptouch_sender():
+    from app import esptouch
+    r = esptouch.send_smartconfig("TestSSID", "pwd123", ip="192.168.1.50", duration_s=0.3)
+    assert r["sent"] is True
+    assert r["packets"] > 0

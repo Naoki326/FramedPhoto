@@ -36,7 +36,10 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             current_image   TEXT DEFAULT '',
             ip              TEXT DEFAULT '',
             last_seen       REAL,
-            created_at      REAL
+            created_at      REAL,
+            wifi_ssid       TEXT DEFAULT '',
+            wifi_password   TEXT DEFAULT '',
+            wifi_pending    INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS images (
@@ -78,11 +81,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
     # 存量库兼容：补新列
-    try:
-        conn.execute("ALTER TABLE photo_scores ADD COLUMN shot_source TEXT DEFAULT ''")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    for col, ddl in (("shot_source", "ALTER TABLE photo_scores ADD COLUMN shot_source TEXT DEFAULT ''"),
+                     ("wifi_ssid", "ALTER TABLE devices ADD COLUMN wifi_ssid TEXT DEFAULT ''"),
+                     ("wifi_password", "ALTER TABLE devices ADD COLUMN wifi_password TEXT DEFAULT ''"),
+                     ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0")):
+        try:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({ddl.split()[2]})")]
+            if col not in cols:
+                conn.execute(ddl)
+                conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
 
 def now() -> float:
@@ -94,7 +103,8 @@ def now() -> float:
 def upsert_device(dev_id: str, **fields) -> None:
     with _lock:
         conn = _get_conn()
-        conn.execute("INSERT OR REPLACE INTO devices (id, created_at, last_seen) VALUES (?, ?, ?)",
+        # INSERT OR IGNORE：已存在设备保留原行（REPLACE 会重置未更新列，如 wifi_ssid/name）
+        conn.execute("INSERT OR IGNORE INTO devices (id, created_at, last_seen) VALUES (?, ?, ?)",
                      (dev_id, now(), now()))
         if fields:
             sets = ", ".join(f"{k}=?" for k in fields)
