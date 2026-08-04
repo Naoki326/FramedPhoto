@@ -87,6 +87,48 @@ async def get_daily_preview():
     return Response(content=preview_png(prepared), media_type="image/png")
 
 
+@router.get("/news/raw")
+async def get_news_raw():
+    from app.news_card import render_news_fps6
+    data = render_news_fps6()
+    if not data:
+        raise HTTPException(503, "news unavailable")
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@router.get("/news/preview")
+async def get_news_preview():
+    from app.news_card import render_news_fps6
+    data = render_news_fps6()
+    if not data:
+        raise HTTPException(503, "news unavailable")
+    w, h = struct.unpack_from("<II", data, 4)
+    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    return Response(content=preview_png(prepared), media_type="image/png")
+
+
+@router.get("/weather/raw")
+async def get_weather_raw():
+    from app.weather_card import render_weather_card
+    data = render_weather_card()
+    if not data:
+        raise HTTPException(503, "weather unavailable")
+    return Response(content=data, media_type="application/octet-stream")
+
+
+@router.get("/weather/preview")
+async def get_weather_preview():
+    from app.weather_card import render_weather_card
+    data = render_weather_card()
+    if not data:
+        raise HTTPException(503, "weather unavailable")
+    w, h = struct.unpack_from("<II", data, 4)
+    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    return Response(content=preview_png(prepared), media_type="image/png")
+
+
+
+
 @router.get("/{img_id}/raw")
 async def get_raw(img_id: str):
     if img_id.startswith("daily-"):
@@ -133,46 +175,6 @@ async def delete_image(img_id: str):
             p.unlink()
     db.delete_image(img_id)
     return {"ok": True, "deleted": img_id}
-
-
-@router.get("/news/raw")
-async def get_news_raw():
-    from app.news_card import render_news_fps6
-    data = render_news_fps6()
-    if not data:
-        raise HTTPException(503, "news unavailable")
-    return Response(content=data, media_type="application/octet-stream")
-
-
-@router.get("/news/preview")
-async def get_news_preview():
-    from app.news_card import render_news_fps6
-    data = render_news_fps6()
-    if not data:
-        raise HTTPException(503, "news unavailable")
-    w, h = struct.unpack_from("<II", data, 4)
-    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
-    return Response(content=preview_png(prepared), media_type="image/png")
-
-
-@router.get("/weather/raw")
-async def get_weather_raw():
-    from app.weather_card import render_weather_card
-    data = render_weather_card()
-    if not data:
-        raise HTTPException(503, "weather unavailable")
-    return Response(content=data, media_type="application/octet-stream")
-
-
-@router.get("/weather/preview")
-async def get_weather_preview():
-    from app.weather_card import render_weather_card
-    data = render_weather_card()
-    if not data:
-        raise HTTPException(503, "weather unavailable")
-    w, h = struct.unpack_from("<II", data, 4)
-    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
-    return Response(content=preview_png(prepared), media_type="image/png")
 
 
 @router.get("/content")
