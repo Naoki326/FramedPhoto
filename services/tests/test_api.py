@@ -217,3 +217,21 @@ def test_esptouch_sender():
     r = esptouch.send_smartconfig("TestSSID", "pwd123", ip="192.168.1.50", duration_s=3.0)
     assert r["sent"] is True
     assert r["packets"] > 0
+
+
+def test_esptouch_v2_sender():
+    from app.esptouch import send_smartconfig_v2
+    r = send_smartconfig_v2("TestSSID", "pwd123", b"FramedPhoto2024!",
+                            ip="192.168.1.50", duration_s=2.5)
+    assert r["sent"] is True
+    assert r["packets"] > 0
+    assert r["v2"] is True
+
+
+def test_esptouch_v2_rejects_bad_key():
+    from app.esptouch import send_smartconfig_v2
+    try:
+        send_smartconfig_v2("TestSSID", "pwd", b"short")
+        assert False, "should raise"
+    except ValueError:
+        pass

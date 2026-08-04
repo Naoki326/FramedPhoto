@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ESPTouch v2 共享密钥（16 字节），须与固件 ESPTOUCH_V2_KEY 一致
+ESPTOUCH_V2_KEY = b"FramedPhoto2024!"
+
 
 class RegisterBody(BaseModel):
     device_id: str | None = None
@@ -105,8 +108,8 @@ async def smartconfig_provision(body: SmartConfigBody, bg: BackgroundTasks):
 
 def _send_smartconfig(ssid: str, password: str) -> None:
     try:
-        # broadcast=True：组播在部分路由器/AP 上被过滤，广播实测兼容性更好
-        esptouch.send_smartconfig(ssid, password, broadcast=True, duration_s=30)
+        # ESPTouch v2：AES 加密，广播 30s（实测兼容性好且同网嗅探无法还原密码）
+        esptouch.send_smartconfig_v2(ssid, password, ESPTOUCH_V2_KEY, duration_s=30)
     except Exception:  # noqa: BLE001
         logger.exception("smartconfig send failed")
 

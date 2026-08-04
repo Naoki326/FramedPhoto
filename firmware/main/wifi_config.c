@@ -30,6 +30,9 @@ static const char *TAG = "wifi_config";
 #define SMARTCONFIG_TIMEOUT_S 300   /* 5 分钟后开 AP 兑底 */
 #define SC_GOT_BIT     BIT0
 
+/* ESPTouch v2 共享密钥（16 字节），须与服务端 esptouch.send_smartconfig_v2 一致 */
+#define ESPTOUCH_V2_KEY "FramedPhoto2024!"
+
 static EventGroupHandle_t s_sc_events;
 static char s_ap_ssid[AP_SSID_MAX];
 
@@ -64,9 +67,11 @@ static void smartconfig_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-    esp_smartconfig_set_type(SC_TYPE_ESPTOUCH);
+    esp_smartconfig_set_type(SC_TYPE_ESPTOUCH_V2);
 
     smartconfig_start_config_t cfg = SMARTCONFIG_START_CONFIG_DEFAULT();
+    cfg.esp_touch_v2_enable_crypt = true;
+    cfg.esp_touch_v2_key = (char *)ESPTOUCH_V2_KEY;
     err = esp_smartconfig_start(&cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "sc start: %s", esp_err_to_name(err));
