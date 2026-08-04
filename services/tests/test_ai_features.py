@@ -288,22 +288,24 @@ def _seed_scores():
 def test_select_daily_photo_historical_today(monkeypatch):
     _seed_scores()
     monkeypatch.setattr("app.daily.settings.daily_min_score", 50)
-    chosen = daily.select_daily_photo()
+    chosen, is_today = daily.select_daily_photo()
     assert chosen is not None
     assert chosen["memory_score"] >= 50  # 高于阈值的候选
     assert chosen["filename"] == "daily1.png"
+    assert is_today is True
 
 
 def test_select_daily_falls_back_to_high_score(monkeypatch):
-    """无历史上的今天候选时，退化为全局高分。"""
+    """无历史上的今天候选时，退化为全局高分（is_today=False，渲染不展示日期）。"""
     p = _make_photo(os.path.join(_tmp, "high.png"))
     # 拍摄日期故意设为"非今天"
     shot = dt.datetime(2020, 1, 1, 12, 0, 0)
     db.upsert_photo_score(p, filename="high.png", memory_score=95,
                           shot_at=shot.timestamp(), shot_source="exif", analyzed_at=db.now())
     monkeypatch.setattr("app.daily.settings.daily_min_score", 99)  # 阈值过高 → 无历史候选
-    chosen = daily.select_daily_photo()
+    chosen, is_today = daily.select_daily_photo()
     assert chosen is not None
+    assert is_today is False
 
 
 def test_render_daily_creates_file():

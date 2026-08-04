@@ -52,26 +52,30 @@ def _weighted_choice(candidates: list[dict]) -> dict | None:
     return candidates[-1] if candidates else None
 
 
-def select_daily_photo() -> dict | None:
-    """历史上的今天 → 高分未用，两个策略按顺序尝试。"""
+def select_daily_photo() -> tuple[dict | None, bool]:
+    """选片。返回 (photo, is_today_match)。
+
+    策略：历史上的今天（EXIF 月-日匹配今日）→ 无则降级全局高分未用。
+    第二个返回值供调用方决定是否展示拍摄日期（降级时展示日期会误导）。
+    """
     m, d = _today_md()
     cand = db.select_daily_candidates((m, d), settings.daily_min_score, limit=30)
     if cand:
         chosen = _weighted_choice(cand)
         if chosen:
-            return chosen
+            return chosen, True
 
     # 降级：全局高分、未用优先
     all_ = db.list_photo_scores(limit=200)
     fresh = [c for c in all_ if (c.get("used_at") or 0) < db.now() - 24 * 3600]
     pool = fresh or all_
     top = sorted(pool, key=lambda c: -(c.get("memory_score") or 0))[:10]
-    return _weighted_choice(top)
+    return _weighted_choice(top), False
 
 
 def render_daily() -> dict | None:
     """选片 → 渲染 FPS6（带文案）→ 返回元数据；无可用照片返回 None。"""
-    photo = select_daily_photo()
+    photo, is_today_match = select_daily_photo()
     if not photo:
         return None
     path = photo["path"]
@@ -84,8 +88,9 @@ def render_daily() -> dict | None:
     if not caption:
         caption = photo.get("caption") or ""
     shot_at = photo.get("shot_at")
+    # 仅“历史上的今天”匹配时展示拍摄日期；降级选片不展示日期（避免误导）
     date_str = ""
-    if shot_at:
+    if is_today_match and shot_at:
         try:
             date_str = dt.datetime.fromtimestamp(shot_at).strftime("%Y.%m.%d")
         except (ValueError, OSError):
