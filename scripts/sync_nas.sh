@@ -62,7 +62,8 @@ if os.path.exists(path):
 for i in range(0, len(pairs), 2):
     k, v = pairs[i], pairs[i + 1]
     if k in ("percent", "transferred_bytes", "total_bytes",
-             "transferred_files", "total_files", "started_at", "last_sync"):
+             "transferred_files", "total_files", "started_at", "last_sync",
+             "avg_speed_kb"):
         try:
             v = float(v) if "." in str(v) else int(v)
         except ValueError:
@@ -155,16 +156,36 @@ RSYNC_PID=$!
 # 注意：列文件清单阶段日志无 '%'，grep 返回非零；set -e 下会误杀脚本，
 # 因此循环与 wait 全程关闭 errexit（rsync 退出码由 RC 显式捕获）
 set +e
+# 平均速度滑动窗口：最近 10 次采样（每 5s 一次 ≈ 50s），下载量 ÷ 时间
+SPEED_BYTES=()
+SPEED_TS=()
 while kill -0 "$RSYNC_PID" 2>/dev/null; do
   LAST=$(tr '\r' '\n' < "$RSYNC_LOG" | grep '%' | tail -1)
   PERCENT=$(echo "$LAST" | grep -oE '[0-9]+%' | tail -1 | tr -d '%')
   BYTES=$(echo "$LAST" | awk '{print $1}' | tr -d ',')
   XFR=$(echo "$LAST" | grep -oE 'xfr#[0-9]+' | grep -oE '[0-9]+')
+  # 采样推进（无论是否有新日志行，保证窗口按 5s 推进）
+  SPEED_BYTES+=("${BYTES:-0}")
+  SPEED_TS+=("$(date +%s)")
+  if [ "${#SPEED_BYTES[@]}" -gt 10 ]; then
+    SPEED_BYTES=("${SPEED_BYTES[@]:1}")
+    SPEED_TS=("${SPEED_TS[@]:1}")
+  fi
+  AVG_SPEED_KB=""
+  if [ "${#SPEED_BYTES[@]}" -ge 2 ]; then
+    IDX=$(( ${#SPEED_BYTES[@]} - 1 ))
+    D_B=$(( SPEED_BYTES[$IDX] - SPEED_BYTES[0] ))
+    D_T=$(( SPEED_TS[$IDX] - SPEED_TS[0] ))
+    if [ "$D_T" -gt 0 ] && [ "$D_B" -ge 0 ]; then
+      AVG_SPEED_KB=$(awk "BEGIN{printf \"%.1f\", $D_B/1024/$D_T}")
+    fi
+  fi
   if [ -n "$PERCENT" ]; then
     write_status \
       "percent" "${PERCENT}" \
       "transferred_bytes" "${BYTES:-0}" \
       "transferred_files" "${XFR:-0}" \
+      "avg_speed_kb" "${AVG_SPEED_KB}" \
       "message" "同步中（限速 ${NAS_RSYNC_BWLIMIT} KB/s）"
   fi
   sleep 5
@@ -178,6 +199,7 @@ if [ "$RC" -eq 0 ]; then
     write_status "status" "done" "message" "演练完成（未传输）"
   else
     write_status "status" "done" "percent" 100 "message" "同步完成" \
+                 "avg_speed_kb" "${AVG_SPEED_KB}" \
                  "last_sync" "$(date +%s)"
     log "同步完成。接下来可分析：python tools/analyze_photos.py ${LOCAL_PHOTO_DIR} -j 4"
   fi

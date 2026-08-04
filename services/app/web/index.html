@@ -205,6 +205,8 @@ async function loadSync() {
     const r = await fetch('/api/sync/status');
     const s = await r.json();
     const fmt = b => b >= 1024**3 ? (b/1024**3).toFixed(2)+' GB' : (b/1024**2).toFixed(0)+' MB';
+    const fmtRate = k => k >= 1024 ? (k/1024).toFixed(2)+' MB/s' : k.toFixed(1)+' KB/s';
+    const avgKb = s.avg_speed_kb !== undefined && s.avg_speed_kb !== '' ? Number(s.avg_speed_kb) : null;
     const pct = s.percent ?? 0;
     const states = { running:'同步中', done:'已完成', error:'失败', stale:'进程失联', idle:'未运行' };
     const color = { running:'#2563eb', done:'#16a34a', error:'#dc2626', stale:'#d97706', idle:'#9ca3af' };
@@ -219,9 +221,9 @@ async function loadSync() {
         </div>
         <div style="display:flex;justify-content:space-between;margin-top:6px;color:#6b7280">
           <span>${pct.toFixed?pct.toFixed(1):pct}%${s.total_files ? ' · '+fmt(s.transferred_files||0)+'/'+fmt(s.total_files)+' 文件' : ''}</span>
-          <span>${s.bwlimit_kb ? '限速 '+s.bwlimit_kb+'KB/s' : ''}</span>
+          <span>${s.bwlimit_kb ? '限速 '+s.bwlimit_kb+'KB/s' : ''}${avgKb !== null ? ' · 均速 '+fmtRate(avgKb) : ''}</span>
         </div>
-        <div style="color:#6b7280;margin-top:6px">${s.message||''}</div>
+        <div style="color:#6b7280;margin-top:6px" title="均速 = 窗口内下载量 ÷ 时间（最近 10 次采样，约 50 秒）">${s.message||''}${avgKb !== null ? '（近 50s 均速 '+fmtRate(avgKb)+'）' : ''}</div>
       </div>`;
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
 }
