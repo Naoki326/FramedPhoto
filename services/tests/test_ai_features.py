@@ -312,5 +312,5 @@ def test_render_daily_creates_file():
     assert meta is not None
     assert daily.daily_fps6_exists()
     assert daily.daily_is_fresh()
-    assert meta["id"] == "daily"
+    assert meta["id"].startswith("daily-")  # 内容指纹 id：文件变化时设备可感知
     assert meta["width"] == 1200

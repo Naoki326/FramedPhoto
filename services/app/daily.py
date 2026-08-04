@@ -13,11 +13,13 @@ daily.py — 每日精选：历史上的今天选片 + 文案渲染。
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import random
 from pathlib import Path
 
 from app import db
+from app.analyzer import generate_random_caption
 from app.config import settings
 from app.epd_image import prepare_image_with_caption
 
@@ -77,7 +79,10 @@ def render_daily() -> dict | None:
         db.upsert_photo_score(photo["path"], analyzed_at=None)  # 标记失效重扫
         return None
 
-    caption = photo.get("caption") or ""
+    # 随机文案：每次渲染（每天）按需调用 VLM 生成，角度随机；失败回退 DB 已有文案
+    caption = generate_random_caption(path)
+    if not caption:
+        caption = photo.get("caption") or ""
     shot_at = photo.get("shot_at")
     date_str = ""
     if shot_at:
@@ -94,8 +99,10 @@ def render_daily() -> dict | None:
 
     DAILY_DIR.mkdir(parents=True, exist_ok=True)
     DAILY_FILE.write_bytes(prepared.data)
+    # 内容指纹：文件变化时 id 变化，设备端据此感知“内容已更新”重新拉取
+    content_id = "daily-" + hashlib.sha256(prepared.data).hexdigest()[:10]
     meta = {
-        "id": "daily",
+        "id": content_id,
         "path": photo["path"],
         "filename": photo.get("filename", ""),
         "caption": caption,

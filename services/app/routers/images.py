@@ -89,6 +89,14 @@ async def get_daily_preview():
 
 @router.get("/{img_id}/raw")
 async def get_raw(img_id: str):
+    if img_id.startswith("daily-"):
+        # 内容指纹型 daily id：设备按 id 拼 URL 下载，转发到每日精选
+        if not daily.daily_fps6_exists():
+            daily.render_daily()
+        if not daily.daily_fps6_exists():
+            raise HTTPException(404, "no daily photo")
+        return Response(content=daily.DAILY_FILE.read_bytes(),
+                        media_type="application/octet-stream")
     meta = _get_or_404(img_id)
     data = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
     return Response(content=data, media_type="application/octet-stream")
@@ -142,7 +150,7 @@ async def content_list(device_id: str | None = None):
         if meta:
             source = "daily"
             result.append({
-                "id": "daily",
+                "id": meta.get("id", "daily"),
                 "filename": meta.get("filename", ""),
                 "caption": meta.get("caption", ""),
                 "date": meta.get("date", ""),

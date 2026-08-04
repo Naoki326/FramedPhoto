@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import re
 import time
@@ -29,6 +30,8 @@ from PIL import Image, ImageStat
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 SYSTEM_PROMPT = """你是一名家庭相册策展人。请分析这张照片，严格返回 JSON（不要 Markdown）：
 {
   "description": "30字以内的画面描述",
@@ -38,6 +41,10 @@ SYSTEM_PROMPT = """你是一名家庭相册策展人。请分析这张照片，�
   "caption": "一句20字以内、有人情味的文案（不要引用原图文字）",
   "reason": "一句话说明评分理由"
 }"""
+
+CAPTION_PROMPT = """你是一名家庭相册策展人。看这张照片，写一句有温度的中文文案（不超过 30 字）。
+要求：每次生成的角度、语气、切入点都要随机变化——有时写场景、有时写人物、有时写情绪、有时写时间感；避免重复用过的句式。
+只输出文案本身，不要引号、不要解释、不要 Markdown。"""
 
 
 @dataclass
@@ -236,6 +243,30 @@ class OpenAICompatClient:
         content = resp.json()["choices"][0]["message"]["content"]
         return _parse_json_block(content)
 
+    def generate_caption(self, image_bytes: bytes) -> str:
+        """随机文案（不要求 JSON，仅返回一句话）。"""
+        if not self.url:
+            raise VLMUnavailable("VLM_API_URL not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": CAPTION_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ]},
+            ],
+            "temperature": 1.1,
+            "max_tokens": 120,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        resp = requests.post(self.url, json=payload, headers=headers,
+                             timeout=self.timeout, proxies=_proxies())
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
 
 class OpenAIResponsesClient:
     """OpenAI Responses API（/v1/responses）—— GPT-5.x 等新模型专用端点。
@@ -290,6 +321,38 @@ class OpenAIResponsesClient:
             raise VLMUnavailable("Responses API returned empty content")
         return _parse_json_block(text)
 
+    def generate_caption(self, image_bytes: bytes) -> str:
+        """随机文案（不要求 JSON，仅返回一句话）。"""
+        if not self.api_key:
+            raise VLMUnavailable("VLM_API_KEY not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "instructions": CAPTION_PROMPT,
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "image_url": f"data:image/jpeg;base64,{b64}"},
+                ],
+            }],
+            "max_output_tokens": 120,
+            "temperature": 1.1,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        resp = requests.post(self.url, json=payload, headers=headers,
+                             timeout=self.timeout, proxies=_proxies())
+        resp.raise_for_status()
+        data = resp.json()
+        text = ""
+        for item in data.get("output", []):
+            if item.get("type") == "message":
+                for c in item.get("content", []):
+                    if c.get("type") == "output_text":
+                        text += c.get("text", "")
+        return text.strip()
+
 
 class AnthropicClient:
     """Anthropic Messages API（Claude 视觉模型）。"""
@@ -329,6 +392,37 @@ class AnthropicClient:
         text = resp.json()["content"][0]["text"]
         return _parse_json_block(text)
 
+    def generate_caption(self, image_bytes: bytes) -> str:
+        """随机文案（不要求 JSON，仅返回一句话）。"""
+        if not self.api_key:
+            raise VLMUnavailable("ANTHROPIC_API_KEY not configured")
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        payload = {
+            "model": self.model,
+            "max_tokens": 120,
+            "temperature": 1.1,
+            "system": CAPTION_PROMPT,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64,
+                    }},
+                ],
+            }],
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        resp = requests.post(f"{self.base_url}/v1/messages", json=payload,
+                             headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"].strip()
+
 
 def build_client() -> AnthropicClient | OpenAICompatClient | OpenAIResponsesClient | None:
     """按 VLM_PROVIDER / VLM_API_MODE 决策返回客户端；无法使用时返回 None。
@@ -359,6 +453,31 @@ def build_client() -> AnthropicClient | OpenAICompatClient | OpenAIResponsesClie
     if settings.vlm_api_url:
         return _openai()
     return None
+
+
+def generate_random_caption(path: str) -> str:
+    """对单张照片生成随机文案（每日渲染时按需调用）。
+
+    每次调用 prompt 要求随机角度；VLM 不可用/失败时返回空字符串（调用方回退）。
+    """
+    if not settings.vlm_enabled:
+        return ""
+    client = build_client()
+    if client is None:
+        return ""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        if len(raw) > 2 * 1024 * 1024:
+            img = Image.open(io.BytesIO(raw))
+            img.thumbnail((1600, 1600))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            raw = buf.getvalue()
+        return client.generate_caption(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("generate_random_caption failed: %s", exc.__class__.__name__)
+        return ""
 
 
 def analyze_image(path: str, use_vlm: bool | None = None) -> Analysis:
