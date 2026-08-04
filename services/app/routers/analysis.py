@@ -25,15 +25,17 @@ async def daily_meta():
 
 @router.get("/preview")
 async def photo_preview(path: str):
-    """照片缩略图（管理台照片库网格用）。仅允许 photo_lib_dir 内文件。"""
+    """照片缩略图（管理台照片库网格用）。仅允许 photo_lib_dir / uploads 内文件。"""
     import io
     from pathlib import Path as P
     from PIL import Image
     from fastapi.responses import Response
 
     root = P(settings.photo_lib_dir).resolve()
+    upload_root = P(settings.upload_dir).resolve()
     p = P(path).resolve()
-    if not str(p).startswith(str(root)) or not p.is_file():
+    allowed = str(p).startswith(str(root)) or str(p).startswith(str(upload_root))
+    if not allowed or not p.is_file():
         raise HTTPException(404, "photo not found")
     try:
         img = Image.open(p)

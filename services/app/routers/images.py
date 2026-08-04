@@ -8,16 +8,19 @@ images.py — 图片上传 / 转换 / 内容管理（SQLite 持久化）。
 - DELETE /{id}       删除图片
 - GET  /content      内容清单（设备轮询，取最新一张）
 """
+import logging
 import struct
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from app import db, daily
 from app.config import settings
 from app.epd_image import HEADER_SIZE, SPECTRA6_PALETTE, PreparedImage, prepare_image, preview_png
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -26,7 +29,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.post("/upload")
-async def upload(file: UploadFile = File(...), dither: bool = True):
+async def upload(file: UploadFile = File(...), dither: bool = True, bg: BackgroundTasks = None):
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "empty file")
@@ -44,10 +47,29 @@ async def upload(file: UploadFile = File(...), dither: bool = True):
 
     db.insert_image(img_id, file.filename or "", fps6_path.name,
                     prepared.width, prepared.height)
+    # 上传图片自动进入照片库（photo_scores）：异步 AI/启发式分析，可设为今日精选
+    bg.add_task(_auto_analyze_upload, original_path, file.filename or "")
     meta = db.get_image(img_id)
     meta["preview_url"] = f"/api/images/{img_id}/preview"
     meta["raw_url"] = f"/api/images/{img_id}/raw"
     return meta
+
+
+def _auto_analyze_upload(path: Path, filename: str) -> None:
+    try:
+        from app.analyzer import analyze_image
+        from app import db as _db
+        a = analyze_image(str(path))
+        _db.upsert_photo_score(
+            a.path, filename=a.filename or filename, caption=a.caption,
+            description=a.description, type=a.type,
+            memory_score=a.memory_score, beauty_score=a.beauty_score,
+            reason=a.reason, shot_at=a.shot_at, shot_source=a.shot_source,
+            gps_lat=a.gps_lat, gps_lon=a.gps_lon,
+            source=a.source, analyzed_at=_db.now(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("auto analyze upload failed: %s", exc)
 
 
 @router.get("")
