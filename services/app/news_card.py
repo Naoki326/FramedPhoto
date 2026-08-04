@@ -1,6 +1,6 @@
 """news_card.py — 热点新闻卡片（21 点后时段显示）。
 
-新闻源：智谱 GLM web-search API（ZHIPU_API_KEY）。
+新闻源：60s API（https://60s.viki.moe/v2/60s，免费无 key，当天热点新闻摘要）。
 配图：imagegen_url/key/model（OpenAI 图片兼容接口，如即梦/通义/DashScope 兼容模式）。
 降级链：文生图失败 → 程序文字卡片（新闻标题排版）；新闻也拿不到 → None（回退照片时段）。
 """
@@ -16,7 +16,7 @@ import textwrap
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from app.config import settings
 from app.epd_image import DEVICE_HEIGHT, DEVICE_WIDTH, SPECTRA6_PALETTE, find_cjk_font, prepare_image
@@ -27,34 +27,18 @@ CACHE_DIR = Path(__file__).resolve().parent / "news_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
 NEWS_COUNT = 5  # 卡片展示条数
+NEWS_API = "https://60s.viki.moe/v2/60s"
 
 
 def fetch_top_news() -> list[str] | None:
-    """智谱 web-search：返回当天热点新闻标题列表。未配置/失败返回 None。"""
-    if not settings.zhipu_api_key:
-        return None
+    """60s API：返回当天热点新闻列表。失败返回 None。"""
     try:
-        r = requests.post(
-            "https://open.bigmodel.cn/api/paas/v4/web-search",
-            headers={"Authorization": f"Bearer {settings.zhipu_api_key}"},
-            json={"search_queries": [{"search_query": "今天最热门的社会新闻"}],
-                  "return_type": "all"},
-            timeout=20,
-        )
+        r = requests.get(NEWS_API, timeout=15)
         r.raise_for_status()
         data = r.json()
-        # 结果在 data.search_result 或 search_results（各版本字段不同）
-        results = data.get("search_result") or data.get("search_results") or []
-        titles = []
-        seen = set()
-        for item in results:
-            title = (item.get("title") or "").strip()
-            if title and title not in seen:
-                seen.add(title)
-                titles.append(title)
-            if len(titles) >= NEWS_COUNT:
-                break
-        return titles or None
+        news = (data.get("data") or {}).get("news") or []
+        titles = [str(x).strip() for x in news if str(x).strip()]
+        return titles[:NEWS_COUNT] or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("fetch_top_news failed: %s", exc.__class__.__name__)
         return None
@@ -88,8 +72,8 @@ def _render_text_card(titles: list[str]) -> bytes:
     W, H = DEVICE_WIDTH, DEVICE_HEIGHT
     img = Image.new("RGB", (W, H), (255, 247, 230))
     draw = ImageDraw.Draw(img)
-    font_title = find_cjk_font(52)
-    font_item = find_cjk_font(38)
+    font_title = ImageFont.truetype(find_cjk_font(), 52)
+    font_item = ImageFont.truetype(find_cjk_font(), 38)
     black, orange, gray = (60, 40, 20), (240, 120, 40), (130, 110, 90)
 
     draw.text((56, 48), "🔥 今日热点", font=font_title, fill=orange)
@@ -107,7 +91,7 @@ def _render_text_card(titles: list[str]) -> bytes:
             ty += 46
         y += 140
 
-    draw.text((56, H - 70), "新闻来源：智谱搜索", font=find_cjk_font(24), fill=gray)
+    draw.text((56, H - 70), "新闻来源：智谱搜索", font=ImageFont.truetype(find_cjk_font(), 24), fill=gray)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

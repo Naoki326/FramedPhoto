@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from lunar_python import Solar
 
 from app.config import settings
@@ -133,10 +133,10 @@ def render_weather_card() -> bytes | None:
     W, H = DEVICE_WIDTH, DEVICE_HEIGHT
     img = Image.new("RGB", (W, H), (255, 255, 255))
     draw = ImageDraw.Draw(img)
-    font_l = find_cjk_font(72)
-    font_m = find_cjk_font(44)
-    font_s = find_cjk_font(34)
-    font_xs = find_cjk_font(26)
+    font_l = ImageFont.truetype(find_cjk_font(), 72)
+    font_m = ImageFont.truetype(find_cjk_font(), 44)
+    font_s = ImageFont.truetype(find_cjk_font(), 34)
+    font_xs = ImageFont.truetype(find_cjk_font(), 26)
     black, gray = (0, 0, 0), (120, 120, 120)
     blue = SPECTRA6_PALETTE[1]
 
