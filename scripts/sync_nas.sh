@@ -76,8 +76,13 @@ PY
 }
 
 # ---------- 远程照片统计（排除视频，进度分母） ----------
+# SSH keepalive：长连接（限速下可达数小时）中途空闲易被 NAT/对端断开，
+# 每 30s 发保活包，4 次无响应才判定死连接
+SSH_KEEPALIVE=(-o ServerAliveInterval=30 -o ServerAliveCountMax=4)
+
 fetch_remote_stats() {
-  ssh -p "$NAS_SSH_PORT" -o ConnectTimeout=15 "${NAS_SSH_USER}@${SSH_HOST}" \
+  ssh -p "$NAS_SSH_PORT" -o ConnectTimeout=15 "${SSH_KEEPALIVE[@]}" \
+    "${NAS_SSH_USER}@${SSH_HOST}" \
     "cd '${NAS_PHOTO_DIR}' && find . -type f \
        ! -name '*.mp4' ! -name '*.mov' ! -name '*.avi' ! -name '*.mkv' \
        ! -name '*.zip' ! -name '*.rar' ! -name '*.7z' ! -name '*.tar' \
@@ -138,7 +143,7 @@ fi
 
 # ---------- rsync（后台）+ 进度追踪 ----------
 : > "$RSYNC_LOG"
-RSYNC_OPTS=(-e "ssh -p ${NAS_SSH_PORT} -o ConnectTimeout=15")
+RSYNC_OPTS=(-e "ssh -p ${NAS_SSH_PORT} -o ConnectTimeout=15 ${SSH_KEEPALIVE[*]}")
 [ -n "$NAS_RSYNC_PATH" ] && RSYNC_OPTS+=(--rsync-path="$NAS_RSYNC_PATH")
 
 "$RSYNC_BIN" "${ARGS[@]}" --info=progress2 "${RSYNC_OPTS[@]}" \
