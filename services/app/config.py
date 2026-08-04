@@ -48,7 +48,9 @@ class Settings(BaseSettings):
 
     # 天气（和风天气）
     qweather_key: str = ""
-    qweather_location: str = "101010100"   # 城市 ID（北京），可在和风控制台查询
+    qweather_host: str = "devapi.qweather.com"   # 专属 API Host（控制台项目设置，如 xxx.re.qweatherapi.com）
+    qweather_location: str = "101010100"
+    qweather_city: str = ""                 # 城市名（可选，显示在卡片底部）   # 城市 ID（北京），可在和风控制台查询
 
     # 新闻（智谱 GLM web search）
     zhipu_api_key: str = ""
@@ -58,6 +60,11 @@ class Settings(BaseSettings):
     imagegen_url: str = ""
     imagegen_key: str = ""
     imagegen_model: str = ""
+
+    # 即梦（火山引擎）文生图
+    jimeng_access_key: str = ""
+    jimeng_secret_key: str = ""
+    jimeng_ratio: str = "3:4"
 
 
 settings = Settings()

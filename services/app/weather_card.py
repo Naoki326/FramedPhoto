@@ -21,7 +21,7 @@ from app.epd_image import find_cjk_font, prepare_image
 
 logger = logging.getLogger(__name__)
 
-QWEATHER_BASE = "https://devapi.qweather.com/v7/weather"
+QWEATHER_BASE = "https://{host}/v7/weather"
 CACHE_DIR = Path(__file__).resolve().parent / "weather_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -50,10 +50,11 @@ def fetch_weather() -> dict | None:
     """拉取实时天气 + 3 日预报。无 key/失败返回 None。"""
     if not settings.qweather_key:
         return None
+    base = QWEATHER_BASE.format(host=settings.qweather_host)
     try:
         params = {"location": settings.qweather_location, "key": settings.qweather_key}
-        now = requests.get(f"{QWEATHER_BASE}/now", params=params, timeout=10).json()
-        f3d = requests.get(f"{QWEATHER_BASE}/3d", params=params, timeout=10).json()
+        now = requests.get(f"{base}/now", params=params, timeout=10).json()
+        f3d = requests.get(f"{base}/3d", params=params, timeout=10).json()
         if now.get("code") != "200" or f3d.get("code") != "200":
             logger.warning("qweather error: now=%s 3d=%s", now.get("code"), f3d.get("code"))
             return None
@@ -66,15 +67,17 @@ def fetch_weather() -> dict | None:
 
 
 def _fetch_city() -> str:
-    """城市名（GeoAPI 反向，失败返回 location）。"""
+    """城市名：优先配置，其次 GeoAPI（失败返回空）。"""
+    if settings.qweather_city:
+        return settings.qweather_city
     try:
         r = requests.get(
             "https://geoapi.qweather.com/v2/city/lookup",
             params={"location": settings.qweather_location, "key": settings.qweather_key},
             timeout=10,
-        ).json()
-        loc = (r.get("location") or [{}])[0]
-        return f"{loc.get('adm1','')}·{loc.get('name','')}"
+        )
+        loc = (r.json().get("location") or [{}])[0]
+        return f"{loc.get('adm1','')}·{loc.get('name','')}".lstrip("·")
     except Exception:  # noqa: BLE001
         return ""
 
