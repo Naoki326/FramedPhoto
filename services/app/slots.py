@@ -11,10 +11,15 @@ from __future__ import annotations
 import datetime as dt
 
 from app.config import settings
+from app.runtime_config import effective
 
 SLOT_WEATHER = "weather"
 SLOT_PHOTO = "photo"
 SLOT_NEWS = "news"
+
+
+def _slot_enabled(name: str) -> bool:
+    return bool(effective(name, settings))
 
 
 def parse_range(spec: str) -> tuple[int, int] | None:
@@ -34,11 +39,11 @@ def current_slot(now: dt.datetime | None = None) -> str:
     minutes = now.hour * 60 + now.minute
 
     slots = []
-    if settings.slot_weather_enabled:
-        slots.append((SLOT_WEATHER, settings.slot_weather))
-    slots.append((SLOT_PHOTO, settings.slot_photo))
-    if settings.slot_news_enabled:
-        slots.append((SLOT_NEWS, settings.slot_news))
+    if _slot_enabled("slot_weather_enabled"):
+        slots.append((SLOT_WEATHER, effective("slot_weather", settings)))
+    slots.append((SLOT_PHOTO, effective("slot_photo", settings)))
+    if _slot_enabled("slot_news_enabled"):
+        slots.append((SLOT_NEWS, effective("slot_news", settings)))
 
     for name, spec in slots:
         r = parse_range(spec)

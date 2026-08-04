@@ -76,6 +76,22 @@
   </section>
 
   <section>
+    <h2>时段编排与设置</h2>
+    <div style="font-size:13px;line-height:2.2">
+      <div>⏰ 天气卡片：<input type="text" id="sWeather" placeholder="00:00-10:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+        <label style="margin-left:8px"><input type="checkbox" id="sWeatherEn" checked> 启用</label></div>
+      <div>🖼 每日照片：<input type="text" id="sPhoto" placeholder="10:00-21:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></div>
+      <div>📰 新闻卡片：<input type="text" id="sNews" placeholder="21:00-24:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+        <label style="margin-left:8px"><input type="checkbox" id="sNewsEn" checked> 启用</label></div>
+      <div>📡 新闻源：<select id="sNewsSource" style="padding:6px"><option value="60s">60s 新闻</option><option value="zhipu">智谱搜索</option></select></div>
+      <div>🌆 城市：<input type="text" id="sCity" placeholder="留空 = 自动 IP 定位" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+        <span id="sIpCity" style="color:#9ca3af"></span></div>
+      <div style="margin-top:10px"><button onclick="saveSettings()">保存设置（即时生效）</button>
+        <span id="sMsg" style="color:#16a34a;font-size:12px;margin-left:10px"></span></div>
+    </div>
+  </section>
+
+  <section>
     <h2>设备</h2>
     <div style="margin-bottom:10px">
       <button onclick="openScModal()">📡 SmartConfig 配网（不断网）</button>
@@ -298,6 +314,39 @@ async function uploadFw() {
   btn.disabled = false;
 }
 
+/* ---- 时段编排与设置 ---- */
+async function loadSettings() {
+  try {
+    const s = await api('/settings');
+    $('sWeather').value = s.config.slot_weather;
+    $('sPhoto').value = s.config.slot_photo;
+    $('sNews').value = s.config.slot_news;
+    $('sWeatherEn').checked = !!s.config.slot_weather_enabled;
+    $('sNewsEn').checked = !!s.config.slot_news_enabled;
+    $('sNewsSource').value = s.config.news_source || '60s';
+    $('sCity').value = s.config.qweather_city || '';
+    $('sIpCity').textContent = s.status.ip_city ? `IP 定位：${s.status.ip_city}` : '';
+  } catch (_) {}
+}
+async function saveSettings() {
+  try {
+    const r = await api('/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slot_weather: $('sWeather').value.trim(),
+        slot_photo: $('sPhoto').value.trim(),
+        slot_news: $('sNews').value.trim(),
+        slot_weather_enabled: $('sWeatherEn').checked,
+        slot_news_enabled: $('sNewsEn').checked,
+        news_source: $('sNewsSource').value,
+        qweather_city: $('sCity').value.trim(),
+      }),
+    });
+    $('sMsg').textContent = '已保存，立即生效'; setTimeout(() => $('sMsg').textContent = '', 2500);
+  } catch (e) { alert('保存失败: ' + e.message); }
+}
+
 /* ---- WiFi 配网（管理台推送） ---- */
 let wifiEditingId = '';
 function openScModal() {
@@ -354,6 +403,7 @@ async function saveWifiConfig() {
 }
 
 loadHealth(); loadSync(); loadDaily(); loadScores(); loadImages(); loadDevices(); loadFw();
+loadSettings();
 setInterval(loadDevices, 15000);
 setInterval(loadDaily, 600000);
 setInterval(loadSync, 5000);

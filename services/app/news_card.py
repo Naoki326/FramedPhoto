@@ -70,8 +70,10 @@ def _fetch_zhipu() -> list[str] | None:
 
 
 def fetch_top_news() -> list[str] | None:
-    """热点新闻：NEWS_SOURCE=zhipu 时优先智谱 MCP，否则/失败降级 60s API。"""
-    if settings.news_source == "zhipu":
+    """热点新闻：运行时配置 news_source 决定 zhipu/60s，失败自动降级。"""
+    from app.runtime_config import effective
+    source = effective("news_source", settings) or "60s"
+    if source == "zhipu":
         t = _fetch_zhipu()
         if t:
             return t

@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 
 from app.config import settings
 from app.routers import analysis, devices, images, ota, sync
+from app.routers import settings as settings_router
 
 app = FastAPI(
     title="FramedPhoto Service",
@@ -25,6 +26,7 @@ app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(ota.router, prefix="/api/ota", tags=["ota"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 
 

@@ -22,6 +22,43 @@ from app.epd_image import find_cjk_font, prepare_image
 logger = logging.getLogger(__name__)
 
 QWEATHER_BASE = "https://{host}/v7/weather"
+
+# IP 定位缓存（IP 不常变，缓存 24h）
+_IP_LOC_CACHE: dict | None = None
+_IP_LOC_TS: float = 0
+_IP_LOC_TTL = 24 * 3600
+
+
+def ip_location() -> dict | None:
+    """IP 定位 → {city, lat, lon}。失败返回 None（缓存 24h）。"""
+    global _IP_LOC_CACHE, _IP_LOC_TS
+    now = dt.datetime.now().timestamp()
+    if _IP_LOC_CACHE and (now - _IP_LOC_TS) < _IP_LOC_TTL:
+        return _IP_LOC_CACHE
+    try:
+        r = requests.get("http://ip-api.com/json/?lang=zh-CN", timeout=8)
+        d = r.json()
+        if d.get("status") != "success":
+            return None
+        city = f"{d.get('regionName','')} {d.get('city','')}".strip()
+        loc = {"city": city or "未知", "lat": d.get("lat"), "lon": d.get("lon")}
+        _IP_LOC_CACHE, _IP_LOC_TS = loc, now
+        return loc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ip_location failed: %s", exc.__class__.__name__)
+        return None
+
+
+def resolve_location() -> tuple[str, str]:
+    """返回 (和风 location 参数, 城市显示名)。运行时配置 > .env > IP 自动定位。"""
+    from app.runtime_config import effective
+    loc_id = effective("qweather_location", settings) or ""
+    city = effective("qweather_city", settings) or ""
+    if not loc_id or loc_id == "101010100":
+        ip = ip_location()
+        if ip and ip.get("lon") is not None:
+            return f"{ip['lon']},{ip['lat']}", ip.get("city", "") or city
+    return loc_id, city
 CACHE_DIR = Path(__file__).resolve().parent / "weather_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
@@ -52,14 +89,15 @@ def fetch_weather() -> dict | None:
         return None
     base = QWEATHER_BASE.format(host=settings.qweather_host)
     try:
-        params = {"location": settings.qweather_location, "key": settings.qweather_key}
+        loc, city = resolve_location()
+        params = {"location": loc, "key": settings.qweather_key}
         now = requests.get(f"{base}/now", params=params, timeout=10).json()
         f3d = requests.get(f"{base}/3d", params=params, timeout=10).json()
         if now.get("code") != "200" or f3d.get("code") != "200":
             logger.warning("qweather error: now=%s 3d=%s", now.get("code"), f3d.get("code"))
             return None
         now_d = now["now"]
-        now_d["city"] = now.get("fxLink", "") and _fetch_city() or settings.qweather_location
+        now_d["city"] = city or settings.qweather_city
         return {"now": now_d, "daily": f3d.get("daily", [])}
     except Exception as exc:  # noqa: BLE001
         logger.warning("fetch_weather failed: %s", exc.__class__.__name__)
