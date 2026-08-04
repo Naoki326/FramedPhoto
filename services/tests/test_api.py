@@ -214,6 +214,6 @@ def test_smartconfig_reject_empty_ssid():
 
 def test_esptouch_sender():
     from app import esptouch
-    r = esptouch.send_smartconfig("TestSSID", "pwd123", ip="192.168.1.50", duration_s=0.3)
+    r = esptouch.send_smartconfig("TestSSID", "pwd123", ip="192.168.1.50", duration_s=3.0)
     assert r["sent"] is True
     assert r["packets"] > 0

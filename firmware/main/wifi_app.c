@@ -23,12 +23,15 @@ static const char *TAG = "wifi_app";
 
 static EventGroupHandle_t s_wifi_events;
 static int s_retry_count;
+static bool s_have_creds;
 
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (s_have_creds) {
+            esp_wifi_connect();
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         if (s_retry_count < WIFI_MAX_RETRY) {
             s_retry_count++;
@@ -122,9 +125,15 @@ esp_err_t wifi_app_start(void)
 
     char ssid[33], pass[65];
     load_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
-    if (!credentials_valid(ssid)) {
+    s_have_creds = credentials_valid(ssid);
+
+    /* 无凭据时也启动 WiFi 驱动（STA 模式，不配置连接）：
+       smartconfig 混杂模式嗅探需要 WiFi 已 start */
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    if (!s_have_creds) {
         ESP_LOGW(TAG, "WiFi credentials not configured (NVS or menuconfig)");
         xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
+        esp_wifi_start();
         return ESP_ERR_INVALID_STATE;
     }
 

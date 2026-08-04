@@ -25,12 +25,15 @@ _DATA_DURATION_S = 4.0
 class _Buffer:
     """长度编码发送缓冲：包内容无关紧要，长度即信息。"""
 
-    def __init__(self):
+    def __init__(self, broadcast: bool = False):
         self.buf = bytearray(600)
         self.data_to_send: list[int] = []
         self.address_count = 0
+        self.broadcast = broadcast
 
     def _next_target(self) -> tuple[str, int]:
+        if self.broadcast:
+            return ("255.255.255.255", _PORT)
         self.address_count += 1
         addr = f"234.{self.address_count % 100}.{self.address_count % 100}.{self.address_count % 100}"
         return (addr, _PORT)
@@ -41,6 +44,8 @@ class _Buffer:
     def _make_socket(self) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if self.broadcast:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         return sock
 
 
@@ -111,7 +116,8 @@ def _prepare(ssid: bytes, password: bytes, ip: bytes, bssid: bytes = b"") -> tup
 
 
 def send_smartconfig(ssid: str, password: str, ip: str | None = None,
-                     bssid: str = "", duration_s: float | None = None) -> dict:
+                     bssid: str = "", duration_s: float | None = None,
+                     broadcast: bool = False) -> dict:
     """发送 ESPTouch v1 配网广播。
 
     :param ssid:     目标 WiFi SSID（UTF-8）
@@ -119,6 +125,7 @@ def send_smartconfig(ssid: str, password: str, ip: str | None = None,
     :param ip:       发送方 IP（可选，默认取本机内网 IP；协议要求 4 字节）
     :param bssid:    可选 BSSID（hex 字符串，如 "aabbccddeeff"）
     :param duration_s: 发送时长（默认 6s：guide 2s + data 4s）
+    :param broadcast: True 用 255.255.255.255 广播，False 用 234.x 组播
     :return: {"sent": True, "packets": n}
     """
     if not ssid:
@@ -137,37 +144,42 @@ def send_smartconfig(ssid: str, password: str, ip: str | None = None,
     if not data_seqs:
         raise ValueError("empty payload")
 
-    buf = _Buffer()
+    buf = _Buffer(broadcast=broadcast)
     sock = buf._make_socket()
     try:
-        # Guide：4 个引导包轮发 2 秒
+        # 循环发送 guide + data：设备找到信道后可能错过首轮数据，
+        # 乐鑫 App 同样循环广播直到设备配网成功（本实现固定时长）。
+        total_s = duration_s or 30.0
         guide = (515, 514, 513, 512)
-        index = 0
-        next_time = time.monotonic()
-        end = time.monotonic() + _GUIDE_DURATION_S
-        while time.monotonic() < end or index != 0:
-            now = time.monotonic()
-            if now >= next_time:
-                buf._send_packet(sock, buf._next_target(), guide[index])
-                next_time = now + _SEND_INTERVAL_S
-                index = (index + 1) % 4
-
-        # Data：包长度序列轮发 4 秒
-        index = 0
-        next_time = time.monotonic()
-        end = time.monotonic() + (duration_s or _DATA_DURATION_S)
         packets = 0
-        while time.monotonic() < end or index != 0:
-            now = time.monotonic()
-            if now >= next_time:
-                buf._send_packet(sock, buf._next_target(), data_seqs[index])
-                next_time = now + _SEND_INTERVAL_S
-                packets += 1
-                index = (index + 1) % len(data_seqs)
+        end = time.monotonic() + total_s
+        while time.monotonic() < end:
+            # Guide：4 个引导包轮发 2 秒
+            index = 0
+            next_time = time.monotonic()
+            g_end = min(time.monotonic() + _GUIDE_DURATION_S, end)
+            while time.monotonic() < g_end or index != 0:
+                now = time.monotonic()
+                if now >= next_time:
+                    buf._send_packet(sock, buf._next_target(), guide[index])
+                    next_time = now + _SEND_INTERVAL_S
+                    index = (index + 1) % 4
+
+            # Data：包长度序列轮发
+            index = 0
+            next_time = time.monotonic()
+            d_end = min(time.monotonic() + _DATA_DURATION_S, end)
+            while time.monotonic() < d_end or index != 0:
+                now = time.monotonic()
+                if now >= next_time:
+                    buf._send_packet(sock, buf._next_target(), data_seqs[index])
+                    next_time = now + _SEND_INTERVAL_S
+                    packets += 1
+                    index = (index + 1) % len(data_seqs)
     finally:
         sock.close()
 
-    logger.info("smartconfig sent: ssid=%s packets=%d", ssid, packets)
+    logger.info("smartconfig sent: ssid=%s packets=%d (%.0fs)", ssid, packets, total_s)
     return {"sent": True, "packets": packets, "ssid": ssid}
 
 

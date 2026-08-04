@@ -105,7 +105,8 @@ async def smartconfig_provision(body: SmartConfigBody, bg: BackgroundTasks):
 
 def _send_smartconfig(ssid: str, password: str) -> None:
     try:
-        esptouch.send_smartconfig(ssid, password)
+        # broadcast=True：组播在部分路由器/AP 上被过滤，广播实测兼容性更好
+        esptouch.send_smartconfig(ssid, password, broadcast=True, duration_s=30)
     except Exception:  # noqa: BLE001
         logger.exception("smartconfig send failed")
 
