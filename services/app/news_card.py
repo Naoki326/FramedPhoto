@@ -154,17 +154,20 @@ def render_news_fps6() -> bytes | None:
     if not titles:
         return None
     data = None
-    if settings.imagegen_url:
+    # 优先即梦文生图（4.6，AK/SK 已配）；其次通用图片接口；最后文字卡片
+    from app.jimeng import generate_cartoon_for_news
+    raw = generate_cartoon_for_news(titles)
+    if not raw and settings.imagegen_url:
         raw = _generate_cartoon(_build_prompt(titles))
-        if raw:
-            try:
-                img = Image.open(io.BytesIO(raw)).convert("RGB")
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                data = prepare_image(buf.getvalue(), DEVICE_WIDTH, DEVICE_HEIGHT, dither=True).data
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("imagegen decode failed: %s", exc)
-                data = None
+    if raw:
+        try:
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            data = prepare_image(buf.getvalue(), DEVICE_WIDTH, DEVICE_HEIGHT, dither=True).data
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("imagegen decode failed: %s", exc)
+            data = None
     if not data:
         data = prepare_image(_render_text_card(titles), DEVICE_WIDTH, DEVICE_HEIGHT,
                              dither=True).data
