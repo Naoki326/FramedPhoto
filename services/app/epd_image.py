@@ -189,13 +189,7 @@ def prepare_image(
     img = Image.open(io.BytesIO(image_bytes))
     img = _fit(img, width, height)
 
-    pix = list(img.getdata())
-    if dither:
-        rows = [pix[y * width:(y + 1) * width] for y in range(height)]
-        indices = _floyd_steinberg(rows)
-    else:
-        indices = [[_nearest_index(pix[y * width + x]) for x in range(width)] for y in range(height)]
-
+    # 量化+抖动集中在 _quantize_to_layout 内完成（之前这里冗余算过一遍，从未使用）
     raw = _quantize_to_layout(img, width, height, dither)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
                          palette=SPECTRA6_PALETTE)
