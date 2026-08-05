@@ -21,3 +21,6 @@ CONFIG_ESP_WIFI_ENABLE_SMARTCONFIG=y
 
 # 刷新按钮：按下立即拉取刷新（0 = 板上 BOOT 键，-1 = 禁用）
 CONFIG_FRAMEDPHOTO_BUTTON_GPIO=12
+
+# 服务端地址：mDNS 主机名（.local），服务端 IP 变化无需改配置
+CONFIG_FRAMEDPHOTO_SERVER_URL="http://chenMac-mini.local:8010"

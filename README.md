@@ -69,7 +69,10 @@ uvicorn app.main:app --reload
 
 AI 能力见 [docs/ai-features.md](docs/ai-features.md)，NAS 接入见 [docs/nas.md](docs/nas.md)，API 见 [docs/api.md](docs/api.md)。
 
-> 服务端当前以 launchd 服务运行在 `http://<内网IP>:8010`（端口 8000 被其他服务占用）。
+> 服务端当前以 launchd 服务运行在 `http://chenMac-mini.local:8010`（端口 8000 被其他服务占用）。
+> 固件通过 mDNS 解析 `.local` 主机名连接服务端，电脑 IP 变化（DHCP 重分配）时无需改任何配置；
+> 查本机 mDNS 名：`scutil --get LocalHostName`。若换电脑/改名，在 `idf.py menuconfig` 里更新
+> `FramedPhoto Application → Service base URL` 后重新烧录即可。
 
 路线图见 [docs/roadmap.md](docs/roadmap.md)，架构设计见 [docs/architecture.md](docs/architecture.md)。
 

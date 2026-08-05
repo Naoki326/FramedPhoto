@@ -16,9 +16,18 @@ menu "FramedPhoto Application"
 
     config FRAMEDPHOTO_SERVER_URL
         string "Service base URL"
-        default "http://192.168.1.100:8010"
+        default "http://chenMac-mini.local:8010"
         help
             服务端根地址，后续内容拉取 / 状态上报 / OTA 均以此为前缀。
+            支持两种写法：
+            - mDNS 主机名（推荐）：http://<macOS LocalHostName>.local:8010
+              如 http://chenMac-mini.local:8010。本机 LocalHostName 可通过
+              `scutil --get LocalHostName` 查询。服务端 IP 变化（DHCP）时
+              mDNS 自动指向新地址，无需改配置；sdkconfig 已启用
+              CONFIG_LWIP_DNS_SUPPORT_MDNS_QUERIES，固件解析 .local 域名
+              会自动发 mDNS 查询，无需额外初始化。
+            - 固定 IP：http://192.168.x.x:8010（路由器给服务端绑定静态
+              地址，或服务端配置固定 IP 时使用）。
 
     config FRAMEDPHOTO_POLL_INTERVAL_MIN
         int "Content poll interval (minutes)"

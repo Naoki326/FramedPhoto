@@ -45,7 +45,8 @@ uvicorn app.main:app --reload
 ./scripts/install_service.sh uninstall  # 卸载
 
 # 日志：services/framedphoto.log
-# 访问：http://<本机内网IP>:8010（管理台）/ /health（健康检查）
+# 访问：http://chenMac-mini.local:8010（管理台）/ /health（健康检查）
+# 说明：.local 为 mDNS 主机名（scutil --get LocalHostName），电脑 IP 变化不影响访问
 ```
 
 > ⚠️ 重要：**项目不要放在 macOS 隐私保护目录**（`~/Documents`、`~/Desktop`、
@@ -58,7 +59,7 @@ uvicorn app.main:app --reload
 
 - 开机自启 + KeepAlive（崩溃自动重启），绑定 0.0.0.0:8010
 - 管理：`./scripts/install_service.sh {install|status|restart|stop|uninstall}`
-- 访问：`http://<内网IP>:8010`（管理台）；日志 `services/framedphoto.log`
+- 访问：`http://chenMac-mini.local:8010`（管理台，mDNS 名，IP 变化不影响）；日志 `services/framedphoto.log`
 
 ### NAS 照片同步（sync_nas.sh）
 
