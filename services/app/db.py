@@ -48,6 +48,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             fps6_path   TEXT DEFAULT '',
             width       INTEGER,
             height      INTEGER,
+            landscape   INTEGER DEFAULT 0,
             created_at  REAL
         );
 
@@ -84,7 +85,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     for col, ddl in (("shot_source", "ALTER TABLE photo_scores ADD COLUMN shot_source TEXT DEFAULT ''"),
                      ("wifi_ssid", "ALTER TABLE devices ADD COLUMN wifi_ssid TEXT DEFAULT ''"),
                      ("wifi_password", "ALTER TABLE devices ADD COLUMN wifi_password TEXT DEFAULT ''"),
-                     ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0")):
+                     ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0"),
+                     ("landscape", "ALTER TABLE images ADD COLUMN landscape INTEGER DEFAULT 0")):
         try:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({ddl.split()[2]})")]
             if col not in cols:
@@ -126,12 +128,14 @@ def list_devices() -> list[dict]:
 
 # ---------- images ----------
 
-def insert_image(img_id: str, filename: str, fps6_path: str, width: int, height: int) -> None:
+def insert_image(img_id: str, filename: str, fps6_path: str, width: int, height: int,
+                 landscape: int = 0) -> None:
     with _lock:
         conn = _get_conn()
         conn.execute(
-            "INSERT INTO images (id, filename, fps6_path, width, height, created_at) VALUES (?,?,?,?,?,?)",
-            (img_id, filename, fps6_path, width, height, now()),
+            "INSERT INTO images (id, filename, fps6_path, width, height, landscape, created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (img_id, filename, fps6_path, width, height, landscape, now()),
         )
         conn.commit()
 

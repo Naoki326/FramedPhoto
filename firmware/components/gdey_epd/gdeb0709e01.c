@@ -6,7 +6,7 @@
  *
  * 官方代码要点：
  *  - init 序列中参数类命令写双 CS，电源类命令只写 CS0（主 IC）
- *  - 刷图：先 IC0 逐行 300B（右半屏），再 IC1 逐行 300B（左半屏），每行延时 1ms
+ *  - 刷图：先 IC0 逐行 300B（左半屏），再 IC1 逐行 300B（右半屏），每行延时 1ms
  *  - 刷新：PON -> (30ms) -> DRF -> POF，每步 BUSY 同步
  */
 #include <string.h>
@@ -184,7 +184,7 @@ esp_err_t gdeb0709e01_fill(gdey_epd_dev_t *dev, uint8_t color_byte)
 
 esp_err_t gdeb0709e01_begin(gdey_epd_dev_t *dev)
 {
-    /* 官方 pic_display_test：先 IC0（右半屏） */
+    /* 先 IC0（左半屏） */
     ESP_RETURN_ON_ERROR(gdey_epd_select(dev, 0, true), TAG, "begin sel ic0");
     ESP_RETURN_ON_ERROR(gdey_epd_cmd(dev, CMD_DTM), TAG, "begin DTM");
     return ESP_OK;

@@ -61,10 +61,11 @@ uvicorn app.main:app --reload
 - [x] **M2 联网取图**（内容清单 + FPS6 下载 + 流式渲染，模拟器验证）
 - [x] **M3 服务端**（SQLite、设备管理、Web 管理台、OTA，45 单测全绿）
 - [x] **M4 AI 回忆相框**：AI 照片评分（gpt-5.6-luna via Responses API）、历史上的今天每日精选、文案渲染、设备深度休眠
+- [x] **自由模块**：新闻版块升级为可配置的图文模块——一段 prompt 每天生成不同内容（宝宝背单词 / 读诗 / 历史故事 / 李白的诗和酒 / 童话故事…），LLM 定当日内容 + 即梦配插画 + 屏幕叠加文字，可多模块每日轮换
 - [x] **群晖 NAS 数据源**：rsync over SSH 增量同步 + 掉线容错（见 `docs/nas.md`）
 - [ ] **NAS 首轮同步 + 全量 AI 分析**（1200+ 张，`tools/analyze_photos.py`）
 - [ ] **真机验证**（烧录：棋盘格 → WiFi → 服务端图片 → 每日精选 → 深度休眠；硬件到手后）
-- [ ] 设备端 OTA 客户端（esp_ota 分区切换）
+- [x] **设备端 OTA 客户端**（esp_ota 分区切换 + sha256 校验 + 失败回滚）
 
 AI 能力见 [docs/ai-features.md](docs/ai-features.md)，NAS 接入见 [docs/nas.md](docs/nas.md)，API 见 [docs/api.md](docs/api.md)。
 

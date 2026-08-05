@@ -34,4 +34,22 @@ menu "FramedPhoto Application"
             0 表示禁用（保持轮询，适合调试）。启用后设备每次唤醒
             检查内容，无变化则不刷屏直接再睡，实现长期续航。
 
+    config FRAMEDPHOTO_BUTTON_GPIO
+        int "Refresh button GPIO (-1 = disabled)"
+        default 12
+        range -1 21
+        help
+            按下立即拉取并刷新内容的按键。配套板只有三个按键：
+            IO12 / IO13 / IO14（无 BOOT/RST 键），默认 IO12。
+            仅 0-21（RTC GPIO）支持深度休眠 EXT1 唤醒；-1 禁用。
+
+    config FRAMEDPHOTO_BUTTON_ACTIVE_LOW
+        bool "Button is active-low (pressed to GND)"
+        default y
+        help
+            按键按下时引脚电平。多数板子按键一端接 GND（按下为低，
+            内部上拉即可）；若板子按键接 VCC（按下为高），关闭此项。
+            电平不对的表现：按按键无反应或上电即误触发刷新。
+            注意：若启用深度休眠，EXT1 唤醒电平会随之自动匹配。
+
 endmenu

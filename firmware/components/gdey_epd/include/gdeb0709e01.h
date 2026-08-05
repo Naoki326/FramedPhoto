@@ -35,14 +35,14 @@ esp_err_t gdeb0709e01_fill(gdey_epd_dev_t *dev, uint8_t color_byte);
 
 /**
  * 全屏刷图（整帧，布局与 FPS6 格式一致）：
- *   先 IC0 逐行 300B（右半屏），再 IC1 逐行 300B（左半屏），最后刷新。
+ *   先 IC0 逐行 300B（左半屏），再 IC1 逐行 300B（右半屏），最后刷新。
  * 帧数据由调用方持有（flash const / PSRAM / 流式读取），不复制进 RAM。
  */
 esp_err_t gdeb0709e01_display_image(gdey_epd_dev_t *dev, const uint8_t *frame, size_t len);
 
 /* ---------- 流式接口（逐行发送，RAM 占用最小，供 HTTP 流 / 图案生成用） ---------- */
 
-/** 开始一帧：选中 IC0 并开启 DTM（先送 IC0 右半屏全部行） */
+/** 开始一帧：选中 IC0 并开启 DTM（先送 IC0 左半屏全部行） */
 esp_err_t gdeb0709e01_begin(gdey_epd_dev_t *dev);
 
 /** 向当前选中 IC 发送一行（bytes_per_ic_row = 300B）；调用方负责每行组织 */

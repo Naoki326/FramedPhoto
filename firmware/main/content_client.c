@@ -80,7 +80,8 @@ static esp_err_t manifest_handler(esp_http_client_event_t *evt)
     }
 }
 
-esp_err_t content_fetch_current_id(char *out_id, size_t len)
+esp_err_t content_fetch_current(char *out_id, size_t id_len,
+                                char *out_url, size_t url_len)
 {
     char url[256];
     build_url(url, sizeof(url), "%s/api/images/content", NULL);
@@ -116,12 +117,25 @@ esp_err_t content_fetch_current_id(char *out_id, size_t len)
     cJSON *first = images && cJSON_GetArraySize(images) > 0
                        ? cJSON_GetArrayItem(images, 0) : NULL;
     cJSON *id = first ? cJSON_GetObjectItem(first, "id") : NULL;
+    cJSON *dl  = first ? cJSON_GetObjectItem(first, "url") : NULL;
 
     esp_err_t ret = ESP_ERR_NOT_FOUND;
     if (cJSON_IsString(id)) {
-        snprintf(out_id, len, "%s", id->valuestring);
+        snprintf(out_id, id_len, "%s", id->valuestring);
+        /* 下载地址：优先用服务端返回的 url 字段（相对路径拼前缀），
+         * 避免「id 拼 URL」约定导致服务端新增内容类型时 404。 */
+        if (cJSON_IsString(dl) && dl->valuestring[0] != '\0') {
+            const char *u = dl->valuestring;
+            if (u[0] == '/') {
+                snprintf(out_url, url_len, "%s%s", CONFIG_FRAMEDPHOTO_SERVER_URL, u);
+            } else {
+                snprintf(out_url, url_len, "%s", u);
+            }
+        } else {
+            build_url(out_url, url_len, "%s/api/images/%s/raw", id->valuestring);
+        }
         ret = ESP_OK;
-        ESP_LOGI(TAG, "current image: %s", out_id);
+        ESP_LOGI(TAG, "current image: %s (url %s)", out_id, out_url);
     } else {
         ESP_LOGW(TAG, "content list empty");
     }
@@ -129,39 +143,39 @@ esp_err_t content_fetch_current_id(char *out_id, size_t len)
     return ret;
 }
 
-/* ---------------- 图片下载 ---------------- */
+/* ---------------- 图片下载（写 storage 裸分区，快于文件系统） ---------------- */
+
+#include "esp_partition.h"
 
 typedef struct {
-    FILE *fp;
+    const esp_partition_t *part;
+    size_t written;   /* 已写入偏移 */
     esp_err_t err;
 } dl_ctx_t;
 
 static esp_err_t image_handler(esp_http_client_event_t *evt)
 {
     dl_ctx_t *d = (dl_ctx_t *)evt->user_data;
-    switch (evt->event_id) {
-    case HTTP_EVENT_ON_DATA:
-        if (d->fp && evt->data_len > 0) {
-            if (fwrite(evt->data, 1, evt->data_len, d->fp) != (size_t)evt->data_len) {
-                d->err = ESP_ERR_NO_MEM; /* 磁盘写失败（磁盘满） */
-            }
+    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
+        esp_err_t e = esp_partition_write(d->part, d->written, evt->data, evt->data_len);
+        if (e != ESP_OK) {
+            ESP_LOGE(TAG, "partition write @%u: %s", (unsigned)d->written, esp_err_to_name(e));
+            d->err = e;
+            return ESP_FAIL;
         }
-        return ESP_OK;
-    default:
-        return ESP_OK;
+        d->written += evt->data_len;
     }
+    return ESP_OK;
 }
 
-esp_err_t content_download_image(const char *id, const char *path)
+/**
+ * 下载 FPS6 图片并裸写入 storage 分区（调用前须已擦除分区）。
+ * @param url  完整下载地址（content_fetch_current 返回的 out_url）
+ * @param part storage 分区句柄
+ */
+esp_err_t content_download_image(const char *url, const esp_partition_t *part)
 {
-    char url[256];
-    build_url(url, sizeof(url), "%s/api/images/%s/raw", id);
-
-    dl_ctx_t ctx = { .fp = fopen(path, "wb"), .err = ESP_OK };
-    if (!ctx.fp) {
-        ESP_LOGE(TAG, "open %s failed", path);
-        return ESP_FAIL;
-    }
+    dl_ctx_t ctx = { .part = part, .written = 0, .err = ESP_OK };
 
     esp_http_client_config_t cfg = {
         .url = url,
@@ -169,6 +183,7 @@ esp_err_t content_download_image(const char *id, const char *path)
         .event_handler = image_handler,
         .user_data = &ctx,
         .keep_alive_enable = false,
+        .buffer_size = 4096, /* 大缓冲：1MB 图少 4 倍 HTTP 回调，显著提速 */
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     esp_err_t err = ESP_ERR_NO_MEM;
@@ -176,29 +191,21 @@ esp_err_t content_download_image(const char *id, const char *path)
         err = esp_http_client_perform(client);
         esp_http_client_cleanup(client);
     }
-    fclose(ctx.fp);
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "download %s failed: %s", url, esp_err_to_name(err));
         return err;
     }
     if (ctx.err != ESP_OK) {
-        ESP_LOGE(TAG, "write %s failed (disk full?)", path);
+        ESP_LOGE(TAG, "write partition failed");
         return ctx.err;
     }
 
     /* 校验文件大小（FPS6 数据区 = 960000B + 20B 头） */
-    FILE *fp = fopen(path, "rb");
-    long size = 0;
-    if (fp) {
-        fseek(fp, 0, SEEK_END);
-        size = ftell(fp);
-        fclose(fp);
-    }
-    if (size < 960000 + 20) {
-        ESP_LOGE(TAG, "file too small: %ld", size);
+    if (ctx.written < 960000 + 20) {
+        ESP_LOGE(TAG, "file too small: %u", (unsigned)ctx.written);
         return ESP_ERR_INVALID_SIZE;
     }
-    ESP_LOGI(TAG, "downloaded %s (%ld bytes)", id, size);
+    ESP_LOGI(TAG, "downloaded %s (%u bytes)", url, (unsigned)ctx.written);
     return ESP_OK;
 }

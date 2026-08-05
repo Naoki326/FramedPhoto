@@ -38,13 +38,19 @@ class Settings(BaseSettings):
     daily_photo_quantity: int = 1          # 每日生成精选张数（设备取第一张）
     memory_threshold: float = 55.0         # 启发式回忆度阈值别名（保留兼容）
 
-    # 时段编排（24h 三时段：天气卡片 / 每日照片 / 新闻卡片，HH:MM-HH:MM）
+    # 天气卡片风格（auto=每日轮换 | apple | blue | magazine | classic）
+    weather_style: str = "auto"
+
+    # 时段编排（24h 三时段：天气卡片 / 每日照片 / 自由模块，HH:MM-HH:MM）
     slot_weather: str = "00:00-10:00"
     slot_photo: str = "10:00-21:00"
-    slot_news: str = "21:00-24:00"
+    slot_free: str = "21:00-24:00"
     slot_weather_enabled: bool = True
+    slot_free_enabled: bool = True
+    # 兼容旧键：历史 runtime_config 里可能存了 slot_news / slot_news_enabled / news_source
+    slot_news: str = "21:00-24:00"
     slot_news_enabled: bool = True
-    news_source: str = "60s"          # zhipu | 60s
+    news_source: str = ""
 
     # 天气（和风天气）
     qweather_key: str = ""
@@ -52,7 +58,11 @@ class Settings(BaseSettings):
     qweather_location: str = "101010100"
     qweather_city: str = ""                 # 城市名（可选，显示在卡片底部）   # 城市 ID（北京），可在和风控制台查询
 
-    # 新闻（智谱 GLM web search）
+    # 自由模块（LLM + 文生图每日生成，替代原新闻卡片）
+    free_enabled: bool = True
+    free_rotate: bool = True   # 每天轮换启用中的模块
+
+    # 智谱 GLM（LLM 生成自由模块当日内容 + 天气卡片设计）
     zhipu_api_key: str = ""
     zhipu_model: str = "glm-4-flash"
 
@@ -64,7 +74,7 @@ class Settings(BaseSettings):
     # 即梦（火山引擎）文生图
     jimeng_access_key: str = ""
     jimeng_secret_key: str = ""
-    jimeng_ratio: str = "3:4"
+    jimeng_ratio: str = "4:3"   # 横屏（相框横放观看）
 
 
 settings = Settings()

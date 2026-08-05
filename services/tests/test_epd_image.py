@@ -33,10 +33,67 @@ def test_header():
     assert len(p.data) == HEADER_SIZE + W * H // 2  # 20 + 960000
 
 
-def test_fit_cover():
-    # 超宽图应裁剪为竖屏目标尺寸
-    p = prepare_image(_make_image(3000, 1000))
+def test_fit_strategy():
+    """竖屏图 cover 铺满；横屏图旋转 90° 后铺满（无黑边，不再裁成竖条）。"""
+    # 竖屏：800x1600 纯白 → 全屏白，无黑边
+    p = prepare_image(_make_image(800, 1600, color=(255, 255, 255)), dither=False)
     assert (p.width, p.height) == (W, H)
+    assert set(p.raw_index) == {0x11}
+
+    # 横屏纯白：旋转 90° 后仍全屏白，无黑边
+    p2 = prepare_image(_make_image(2000, 1000, color=(255, 255, 255)), dither=False)
+    assert (p2.width, p2.height) == (W, H)
+    assert set(p2.raw_index) == {0x11}
+
+    # 横屏左黑右白：旋转 90° 后上白下黑（cover 铺满，顶部=原图右半，底部=原图左半）
+    img = Image.new("RGB", (2000, 1000), (0, 0, 0))
+    for x in range(1000, 2000):
+        for y in range(1000):
+            img.putpixel((x, y), (255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    p3 = prepare_image(buf.getvalue(), dither=False)
+    rb = W // 2
+    assert set(p3.raw_index[0:rb]) == {0x11}                 # 顶部白（原右半）
+    assert set(p3.raw_index[(H - 1) * rb:H * rb]) == {0x00}  # 底部黑（原左半）
+
+
+def test_caption_rotates_with_landscape():
+    """横屏照片的底部文案跟随照片旋转：渐变带落在数据区右缘（相框顺时针横放时在底部）。"""
+    from app.epd_image import prepare_image_with_caption
+
+    # 横屏纯白 + 文案：照片旋转铺满，文字/渐变带应在右缘，左缘仍为纯白照片
+    p = prepare_image_with_caption(_make_image(2000, 1000, color=(255, 255, 255)),
+                                   caption="横屏测试", date_str="2026.08.04", dither=False)
+    raw = p.raw_index
+    rb = W // 2
+    # 左缘 120 列（x 0..239）为纯白照片区
+    assert all(b == 0x11 for b in raw[0:120])
+    # 右缘渐变带区域（x 960..1199，字节 480..599）存在非纯白字节（渐变中段量化后为黑/绿）
+    right_band = [raw[y * rb + k] for y in range(H) for k in range(480, 600)]
+    assert any(b != 0x11 for b in right_band)
+
+
+def test_exif_orientation_applied():
+    """手机照片 EXIF 方向：orientation=6 的横屏存储应被摆正为竖屏显示，不再横躺。"""
+    from PIL import Image as PILImage
+
+    # 存储像素 300x200（横屏）：左半黑、右半白，EXIF 标记 orientation=6（顺时针旋转 90° 显示）
+    img = PILImage.new("RGB", (300, 200), (0, 0, 0))
+    for x in range(150, 300):
+        for y in range(200):
+            img.putpixel((x, y), (255, 255, 255))
+    exif = PILImage.Exif()
+    exif[0x0112] = 6  # Orientation
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", exif=exif)
+
+    p = prepare_image(buf.getvalue(), dither=False)
+    assert (p.width, p.height) == (W, H)
+    rb = W // 2
+    # 摆正后为 200x300 竖屏，cover 铺满全屏：上半黑、下半白
+    assert set(p.raw_index[0:rb]) == {0x00}
+    assert set(p.raw_index[(H - 1) * rb:H * rb]) == {0x11}
 
 
 def test_pure_white_layout():
@@ -55,7 +112,7 @@ def test_pure_black_layout():
 
 
 def test_dual_ic_row_split():
-    """行内布局：前 300B 属 IC0（右半），后 300B 属 IC1（左半）。"""
+    """行内布局：前 300B 属 IC0（左半），后 300B 属 IC1（右半），像素从左到右。"""
     # 左半黑右半白的图像
     img = Image.new("RGB", (W, H), (0, 0, 0))
     for x in range(W // 2, W):
@@ -65,11 +122,11 @@ def test_dual_ic_row_split():
     img.save(buf, format="PNG")
     p = prepare_image(buf.getvalue(), dither=False)
     raw = p.raw_index
-    # 检查第 0 行：字节 0（最右像素）应来自右半屏白色区；字节 599（最左）来自黑色区
-    # 每行 600B，右半屏白色区域落在 k<300 区间（行内 k 0..299 对应 x 1198..600）
+    # 检查第 0 行：字节 0（最左像素）应来自左半屏黑色区；字节 599（最右）来自白色区
+    # 每行 600B，左半屏黑色区落在 k<300 区间（行内 k 0..299 对应 x 0..599）
     row0 = raw[0:600]
-    assert row0[0] == 0x11  # 最右像素对 = 白
-    assert row0[599] == 0x00  # 最左像素对 = 黑
+    assert row0[0] == 0x00  # 最左像素对 = 黑
+    assert row0[599] == 0x11  # 最右像素对 = 白
 
 
 def test_preview_roundtrip():
@@ -119,6 +176,6 @@ def test_color_nibble_mapping():
     for i, _ in enumerate(colors):
         y = i * band + 10
         x = 10  # 逻辑坐标
-        k = (W - 2 - x) // 2
+        k = x // 2  # LTR：字节 k ↔ 像素对 (2k, 2k+1)
         byte = raw[y * (W // 2) + k]
         assert byte == (NIBBLES[i] << 4) | NIBBLES[i], f"color {i}: got {byte:02x}"

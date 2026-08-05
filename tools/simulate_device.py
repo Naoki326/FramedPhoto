@@ -40,7 +40,7 @@ def main() -> int:
 
     payload = data[HEADER:]
 
-    # 固件逻辑：IC0 阶段读每行前 300B；IC1 阶段从 offset 300 起连续读 300B/行
+    # 固件逻辑：IC0 阶段读每行前 300B（左半）；IC1 阶段按行读每行后 300B（右半）
     ic0 = bytearray()
     for y in range(H):
         ic0 += payload[y * ROW_BYTES:(y * ROW_BYTES) + IC_ROW]
@@ -53,20 +53,19 @@ def main() -> int:
     px = img.load()
 
     def fill_ic(ic_bytes: bytes, x_start: int):
-        # 每行 IC_ROW 字节；字节 k 对应当前 IC 内的像素对（从右到左）
+        # 每行 IC_ROW 字节；字节 k 对应当前 IC 内的像素对（从左到右，LTR）
         for y in range(H):
             base = y * IC_ROW
             for k in range(IC_ROW):
                 b = ic_bytes[base + k]
                 hi = NIBBLES.index(b >> 4)
                 lo = NIBBLES.index(b & 0xF)
-                # 当前 IC 内最右像素对 = 字节 0
-                local_x = IC_ROW * 2 - 2 - 2 * k
+                local_x = 2 * k  # LTR：字节 k ↔ 像素对 (2k, 2k+1)
                 px[x_start + local_x, y] = SPECTRA6_PALETTE[hi]
                 px[x_start + local_x + 1, y] = SPECTRA6_PALETTE[lo]
 
-    fill_ic(bytes(ic0), 600)   # IC0 -> 屏幕右半
-    fill_ic(bytes(ic1), 0)     # IC1 -> 屏幕左半
+    fill_ic(bytes(ic0), 0)   # IC0 -> 屏幕左半
+    fill_ic(bytes(ic1), 600) # IC1 -> 屏幕右半
 
     img.save(args.output)
     print(f"device view saved: {args.output} ({W}x{H})")

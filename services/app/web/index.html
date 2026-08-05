@@ -6,8 +6,12 @@
 <title>FramedPhoto 管理台</title>
 <style>
   body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
-  header { background: #1f2937; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { font-size: 18px; margin: 0; }
+  header { background: #1f2937; color: #fff; padding: 14px 24px 0; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0 0 10px; }
+  .tabs { display: flex; gap: 4px; }
+  .tab { background: transparent; color: #cbd5e1; border: 0; padding: 9px 20px; font-size: 14px; cursor: pointer; border-radius: 8px 8px 0 0; }
+  .tab:hover { color: #fff; }
+  .tab.active { background: #f5f6f8; color: #111; font-weight: 600; }
   main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
   section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   h2 { font-size: 15px; margin: 0 0 12px; color: #374151; }
@@ -18,9 +22,9 @@
   button.danger { background: #dc2626; }
   button.danger:hover { background: #b91c1c; }
   button:disabled { background: #9ca3af; cursor: not-allowed; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
   .card { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
-  .card img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; background: #eee; }
+  .card img { width: 100%; height: 220px; object-fit: contain; display: block; background: #eee; }
   .card .meta { padding: 8px 10px; font-size: 12px; color: #6b7280; }
   .card .meta b { display: block; color: #111; font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card .row { display: flex; justify-content: space-between; align-items: center; }
@@ -31,85 +35,191 @@
   .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; background: #eef2ff; color: #4338ca; }
   .pill.online { background: #dcfce7; color: #166534; }
   .pill.offline { background: #fee2e2; color: #991b1b; }
-  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 99; }
   #toast.show { opacity: .95; }
   .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 50; }
   .modal-box { background: #fff; border-radius: 10px; padding: 20px 22px; width: 340px; box-shadow: 0 8px 30px rgba(0,0,0,.2); }
   .modal-box h3 { margin: 0 0 4px; font-size: 15px; }
   .modal-box button { margin-right: 8px; }
   .modal-box button:last-child { margin-right: 0; }
+  #displayImg { max-width: 100%; max-height: 440px; object-fit: contain; background: #111; border-radius: 8px; }
+  .displaybox { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .displayinfo { flex: 1; min-width: 280px; font-size: 13px; line-height: 1.9; }
+
+  /* ---- 时段编排：24h 时序控件（磁盘分区式） ---- */
+  .tl-seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center;
+    gap: 4px; color: #fff; font-size: 11px; white-space: nowrap; overflow: hidden; cursor: pointer;
+    text-shadow: 0 1px 2px rgba(0,0,0,.3); border-right: 1px solid rgba(255,255,255,.55); box-sizing: border-box; }
+  .tl-seg:hover { filter: brightness(1.08); }
+  .tl-handle { position: absolute; top: 0; bottom: 0; width: 14px; margin-left: -7px; z-index: 4;
+    cursor: ew-resize; touch-action: none; }
+  .tl-handle::after { content: ''; position: absolute; top: 3px; bottom: 3px; left: 50%; transform: translateX(-50%);
+    width: 3px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+  .tl-handle:hover::after, .tl-handle.drag::after { width: 5px; background: #fbbf24; }
+  #timeline.dragging { cursor: ew-resize; }
+  #tlRuler .tick { position: absolute; top: 3px; transform: translateX(-50%); font-size: 9px; color: #9ca3af; }
+  #tlRuler .tick.major { top: 0; font-size: 10px; color: #6b7280; font-weight: 600; }
+  #tlRuler .tick::before { content: ''; position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 1px; background: #d1d5db; }
+  #tlRuler .tick.major::before { height: 7px; }
+  #tlRuler .tick.minor::before { height: 4px; }
+  #tlRuler .tick.end { transform: translateX(-100%); }
+  #tlMenu { position: absolute; z-index: 20; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.18); padding: 8px; min-width: 200px; }
+  #tlMenu .tmi { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 9px;
+    border: 0; background: transparent; border-radius: 7px; font-size: 13px; cursor: pointer; color: #111; }
+  #tlMenu .tmi:hover { background: #f3f4f6; }
+  #tlMenu .tmi .dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+  #tlMenu .sep { height: 1px; background: #f0f0f0; margin: 6px 2px; }
+  #tlMenu .del { color: #dc2626; }
 </style>
 </head>
 <body>
-<header><h1>🖼 FramedPhoto 管理台</h1><span id="health" style="font-size:13px;opacity:.8">…</span></header>
+<header>
+  <div><h1>🖼 FramedPhoto 管理台</h1></div>
+  <nav class="tabs" style="align-self:flex-end">
+    <button class="tab active" data-tab="display">当前显示</button>
+    <button class="tab" data-tab="photos">照片</button>
+    <button class="tab" data-tab="sync">同步</button>
+    <button class="tab" data-tab="settings">设置</button>
+  </nav>
+</header>
 <main>
-  <section>
-    <h2>NAS 照片同步</h2>
-    <div id="syncbox"><div class="empty">加载中…</div></div>
-  </section>
 
-  <section>
-    <h2>上传图片</h2>
-    <div class="upload-row">
-      <input type="file" id="file" accept="image/*" multiple>
-      <button onclick="upload()" id="uploadBtn">上传并转换</button>
-    </div>
-  </section>
+  <!-- ═══════════ 当前显示 ═══════════ -->
+  <div class="panel" id="panel-display">
+    <section>
+      <h2>当前显示</h2>
+      <div class="displaybox">
+        <img id="displayImg" alt="" style="display:none">
+        <div class="displayinfo">
+          <div id="displayMode" class="empty">加载中…</div>
+          <div id="displayMeta" style="color:#6b7280"></div>
+          <div class="upload-row" style="margin-top:14px">
+            <input type="file" id="displayFile" accept="image/*">
+            <button onclick="uploadDisplay()" id="displayBtn">上传并立即显示（一次性）</button>
+          </div>
+          <div style="margin-top:10px">
+            <button onclick="refreshFree()" id="freeRefreshBtn" style="background:#7c3aed">✨ 重新生成今日自由模块</button>
+            <span style="font-size:12px;color:#9ca3af;margin-left:8px">跳过缓存，LLM + 即梦重新出图（约 1-2 分钟）</span>
+          </div>
+          <p style="color:#9ca3af;font-size:12px;margin:8px 0">
+            上传后设备下次刷新即显示这张图；<b>不保存到照片库</b>，可随时上传替换，或恢复时段自动内容。
+          </p>
+          <button class="danger" onclick="clearDisplay()" id="displayClearBtn" style="display:none">恢复时段自动内容</button>
+        </div>
+      </div>
+    </section>
+  </div>
 
-  <section>
-    <h2>今日精选（历史上的今天）</h2>
-    <div id="daily"><div class="empty">加载中…</div></div>
-  </section>
+  <!-- ═══════════ 照片 ═══════════ -->
+  <div class="panel" id="panel-photos" style="display:none">
+    <section>
+      <h2>上传图片（保存到内容库）</h2>
+      <div class="upload-row">
+        <input type="file" id="file" accept="image/*" multiple>
+        <button onclick="upload()" id="uploadBtn">上传并转换</button>
+      </div>
+    </section>
 
-  <section>
-    <h2>内容库（当前显示第一张）</h2>
-    <div class="grid" id="images"><div class="empty">加载中…</div></div>
-  </section>
+    <section>
+      <h2>今日精选（历史上的今天）</h2>
+      <div id="daily"><div class="empty">加载中…</div></div>
+    </section>
 
-  <section>
-    <h2>照片库（设为今日精选）</h2>
-    <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
-    <div class="grid" id="scores" style="max-height:480px;overflow-y:auto;padding-right:6px"><div class="empty">加载中…</div></div>
-    <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
-  </section>
+    <section>
+      <h2>内容库</h2>
+      <div class="grid" id="images"><div class="empty">加载中…</div></div>
+    </section>
 
-  <section>
-    <h2>时段编排与设置</h2>
-    <div style="font-size:13px;line-height:2.2">
-      <div>⏰ 天气卡片：<input type="text" id="sWeather" placeholder="00:00-10:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
-        <label style="margin-left:8px"><input type="checkbox" id="sWeatherEn" checked> 启用</label></div>
-      <div>🖼 每日照片：<input type="text" id="sPhoto" placeholder="10:00-21:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px"></div>
-      <div>📰 新闻卡片：<input type="text" id="sNews" placeholder="21:00-24:00" style="width:110px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
-        <label style="margin-left:8px"><input type="checkbox" id="sNewsEn" checked> 启用</label></div>
-      <div>📡 新闻源：<select id="sNewsSource" style="padding:6px"><option value="60s">60s 新闻</option><option value="zhipu">智谱搜索</option></select></div>
-      <div>🌆 城市：<input type="text" id="sCity" placeholder="留空 = 自动 IP 定位" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
-        <span id="sIpCity" style="color:#9ca3af"></span></div>
-      <div style="margin-top:10px"><button onclick="saveSettings()">保存设置（即时生效）</button>
-        <span id="sMsg" style="color:#16a34a;font-size:12px;margin-left:10px"></span></div>
-    </div>
-  </section>
+    <section>
+      <h2>照片库（设为今日精选）</h2>
+      <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+      <div class="grid" id="scores" style="max-height:480px;overflow-y:auto;padding-right:6px"><div class="empty">加载中…</div></div>
+      <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
+    </section>
+  </div>
 
-  <section>
-    <h2>设备</h2>
-    <div style="margin-bottom:10px">
-      <button onclick="openScModal()">📡 SmartConfig 配网（不断网）</button>
-      <span style="font-size:12px;color:#9ca3af;margin-left:8px">设备未配网/连不上时，在局域网广播 WiFi 配置，设备自动连接</span>
-    </div>
-    <table>
-      <thead><tr><th>设备 ID</th><th>固件</th><th>当前内容</th><th>电量</th><th>最后心跳</th><th>WiFi</th></tr></thead>
-      <tbody id="devices"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
-    </table>
-  </section>
+  <!-- ═══════════ 同步 ═══════════ -->
+  <div class="panel" id="panel-sync" style="display:none">
+    <section>
+      <h2>NAS 照片同步</h2>
+      <div id="syncbox"><div class="empty">加载中…</div></div>
+    </section>
+  </div>
 
-  <section>
-    <h2>固件（OTA）</h2>
-    <div id="fwInfo" class="empty">加载中…</div>
-    <div class="upload-row" style="margin-top:12px">
-      <input type="text" id="fwVersion" placeholder="版本号（如 0.3.0）" style="width:160px;padding:8px;border:1px solid #d1d5db;border-radius:6px">
-      <input type="file" id="fwFile" accept=".bin">
-      <button onclick="uploadFw()" id="fwBtn">发布固件</button>
-    </div>
-  </section>
+  <!-- ═══════════ 设置 ═══════════ -->
+  <div class="panel" id="panel-settings" style="display:none">
+    <section>
+      <h2>时段编排与设置</h2>
+      <div style="font-size:13px;line-height:2.2">
+        <div style="margin-bottom:2px">
+          <b>⏱ 时段编排</b>
+          <span style="color:#9ca3af;font-size:12px;margin-left:10px">拖动<b>白色边界</b>调整时段 · 双击某段<b>在点击处切开</b> · 点击某段更换内容类型</span>
+        </div>
+        <div id="timelineWrap" style="position:relative;user-select:none">
+          <div id="timeline" style="position:relative;height:36px;border-radius:8px;overflow:hidden;background:#e5e7eb;cursor:pointer"></div>
+          <div id="tlNow" style="position:absolute;top:-3px;bottom:-3px;width:2px;background:#ef4444;border-radius:2px;z-index:6;display:none;pointer-events:none;box-shadow:0 0 0 1px #fff"></div>
+          <div id="tlRuler" style="position:relative;height:18px;margin-top:2px"></div>
+          <div style="display:flex;align-items:center;gap:16px;margin-top:4px;font-size:12px;color:#6b7280;flex-wrap:wrap">
+            <span>当前时段：<b id="tlCurrent" style="color:#111"></b><span id="tlDirty" style="color:#d97706;margin-left:6px"></span></span>
+            <span id="tlLegend" style="display:flex;gap:14px;flex-wrap:wrap"></span>
+          </div>
+        </div>
+        <div style="margin-top:6px">🎨 天气卡片风格：
+          <select id="sStyle" style="padding:6px">
+            <option value="auto">每日轮换</option>
+            <option value="apple">Apple 天气风</option>
+            <option value="blue">多彩卡片</option>
+            <option value="magazine">杂志排版</option>
+            <option value="classic">经典微调</option>
+          </select>
+          <span id="sStyleToday" style="color:#9ca3af"></span>
+          <span id="sWeatherNote" style="color:#d97706;font-size:12px"></span></div>
+        <div style="margin-top:8px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+          <b style="font-size:13px">🧩 自由模块列表</b>
+          <span id="sFreeToday" style="color:#9ca3af;font-size:12px"></span>
+          <p style="font-size:12px;color:#6b7280;margin:6px 0 10px;line-height:1.7">
+            每个模块配一段 <b>prompt</b>，描述想看什么内容；每天由 LLM 根据它生成当天内容
+            （标题 / 正文 / 画面描述），即梦画插画并在屏幕上叠加文字，所以
+            <b>宝宝背单词、读诗、历史故事、童话故事、新闻……</b>都可以。
+            开启「每日轮换」则每天换一个启用的模块；同一模块每天内容也不同。
+            <b>在上面时序条里排入「✨ 自由模块」时段</b>即可上屏。
+          </p>
+          <div id="freeMods"></div>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:14px">
+            <button onclick="addFreeModule()" style="background:#f3f4f6;color:#374151">＋ 添加模块</button>
+            <label style="font-size:13px"><input type="checkbox" id="sFreeRotate"> 每日轮换模块</label>
+          </div>
+        </div>
+        <div>🌆 城市：<input type="text" id="sCity" placeholder="留空 = 自动 IP 定位" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+          <span id="sIpCity" style="color:#9ca3af"></span></div>
+        <div style="margin-top:10px"><button onclick="saveSettings()">保存设置（即时生效）</button>
+          <span id="sMsg" style="color:#16a34a;font-size:12px;margin-left:10px"></span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>设备</h2>
+      <div style="margin-bottom:10px">
+        <button onclick="openScModal()">📡 SmartConfig 配网（不断网）</button>
+        <span style="font-size:12px;color:#9ca3af;margin-left:8px">设备未配网/连不上时，在局域网广播 WiFi 配置，设备自动连接</span>
+      </div>
+      <table>
+        <thead><tr><th>设备 ID</th><th>固件</th><th>当前内容</th><th>电量</th><th>最后心跳</th><th>WiFi</th></tr></thead>
+        <tbody id="devices"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>固件（OTA）</h2>
+      <div id="fwInfo" class="empty">加载中…</div>
+      <div class="upload-row" style="margin-top:12px">
+        <input type="text" id="fwVersion" placeholder="版本号（如 0.3.0）" style="width:160px;padding:8px;border:1px solid #d1d5db;border-radius:6px">
+        <input type="file" id="fwFile" accept=".bin">
+        <button onclick="uploadFw()" id="fwBtn">发布固件</button>
+      </div>
+    </section>
+  </div>
 </main>
 <div id="toast"></div>
 
@@ -172,6 +282,79 @@ function timeAgo(ts) {
   return Math.floor(s / 86400) + 'd 前';
 }
 
+/* ---- Tab 切换 ---- */
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+  t.classList.add('active');
+  $('panel-' + t.dataset.tab).style.display = '';
+}));
+
+/* ---- 当前显示（一次性上传切换） ---- */
+const SOURCE_NAMES = { display: '手动临时图', weather: '天气卡片', free: '自由模块', manual: '手动上传', daily: '每日精选', photo: '每日照片', content_push: '内容库推送' };
+async function loadDisplay() {
+  const img = $('displayImg');
+  try {
+    const cur = await api('/images/display/current');
+    if (cur.displaying === 'manual' && cur.item) {
+      const it = cur.item;
+      img.style.display = '';
+      img.src = it.preview_url + (it.preview_url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      $('displayMode').innerHTML = '📌 <b>手动临时显示</b>：' + (it.filename || it.id);
+      $('displayMeta').textContent = '设备下次刷新将显示这张图（优先于时段内容）';
+      $('displayClearBtn').style.display = '';
+      return;
+    }
+    const r = await fetch('/api/images/content');
+    const { images, source } = await r.json();
+    if (images.length) {
+      const it = images[0];
+      img.style.display = '';
+      img.src = it.preview_url + (it.preview_url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      $('displayMode').innerHTML = '🕐 <b>时段自动内容</b>（' + (SOURCE_NAMES[source] || source) + '）';
+      $('displayMeta').textContent = (it.filename || '') + (it.caption ? ' · ' + it.caption : '');
+    } else {
+      img.style.display = 'none';
+      $('displayMode').innerHTML = '<span class="empty">暂无内容（上传一张或等待时段内容）</span>';
+      $('displayMeta').textContent = '';
+    }
+    $('displayClearBtn').style.display = 'none';
+  } catch (_) {
+    img.style.display = 'none';
+    $('displayMode').innerHTML = '<span class="empty">加载失败</span>';
+  }
+}
+async function uploadDisplay() {
+  const f = $('displayFile').files[0];
+  if (!f) return toast('请先选择图片');
+  const fd = new FormData(); fd.append('file', f);
+  const btn = $('displayBtn'); btn.disabled = true;
+  try {
+    const m = await api('/images/display/upload', { method: 'POST', body: fd });
+    toast(`已切换到「${m.filename || '临时图'}」，设备下次刷新显示`);
+    loadDisplay();
+  } catch (e) { toast('上传失败: ' + e.message); }
+  btn.disabled = false;
+}
+async function clearDisplay() {
+  if (!confirm('恢复时段自动内容？')) return;
+  try {
+    await api('/images/display/current', { method: 'DELETE' });
+    toast('已恢复时段自动内容');
+    loadDisplay(); loadDaily();
+  } catch (e) { toast('失败: ' + e.message); }
+}
+async function refreshFree() {
+  const btn = $('freeRefreshBtn'); btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
+  try {
+    const r = await fetch('/api/images/free/raw?refresh=1');
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    toast('已重新生成今日自由模块');
+    loadDisplay();
+  } catch (e) { toast('生成失败: ' + e.message); }
+  btn.disabled = false; btn.textContent = '✨ 重新生成今日自由模块';
+}
+
 async function loadHealth() {
   try { const h = await (await fetch('/health')).json(); $('health').textContent = `EPD ${h.epd} · ok`; } catch (_) {}
 }
@@ -181,13 +364,13 @@ async function loadDaily() {
     const r = await fetch('/api/images/content');
     const { images, source } = await r.json();
     if (!images.length || source !== 'daily') {
-      box.innerHTML = '<div class="empty">暂无每日精选（上传图片或运行照片分析后生成）</div>';
+      box.innerHTML = '<div class="empty">当前未显示每日精选（设备显示：' + (SOURCE_NAMES[source] || source || '—') + '；上传图片或运行照片分析后自动生成）</div>';
       return;
     }
     const m = images[0];
     box.innerHTML = `
       <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <img src="/api/images/daily/preview" style="width:180px;aspect-ratio:3/4;object-fit:cover;border-radius:8px;background:#eee">
+        <img src="/api/images/daily/preview" style="width:200px;height:200px;object-fit:contain;border-radius:8px;background:#eee">
         <div style="font-size:13px;line-height:1.9">
           <div><b>${m.filename || ''}</b></div>
           <div>📅 ${m.date || '—'} · 回忆度 ${m.memory_score ?? '—'}</div>
@@ -230,10 +413,10 @@ async function pickDaily(pathEnc) {
   const path = decodeURIComponent(pathEnc);
   if (!confirm('设为今日精选？设备下次刷新将显示这张')) return;
   try { await api('/images/daily/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
-    toast('已设为今日精选'); loadManualPick(); loadDaily(); } catch (e) { toast('失败: ' + e.message); }
+    toast('已设为今日精选'); loadManualPick(); loadDaily(); loadDisplay(); } catch (e) { toast('失败: ' + e.message); }
 }
 async function unpickDaily() {
-  try { await api('/images/daily/select', { method: 'DELETE' }); toast('已恢复自动选片'); loadManualPick(); loadDaily(); }
+  try { await api('/images/daily/select', { method: 'DELETE' }); toast('已恢复自动选片'); loadManualPick(); loadDaily(); loadDisplay(); }
   catch (e) { toast('失败: ' + e.message); }
 }
 async function loadSync() {
@@ -266,6 +449,8 @@ async function loadSync() {
 }
 async function loadImages() {
   const { images } = await api('/images');
+  let pushedId = '';
+  try { pushedId = (await api('/images/content/pushed')).pushed?.id || ''; } catch (_) {}
   const box = $('images');
   if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
   box.innerHTML = images.map(m => `
@@ -273,10 +458,27 @@ async function loadImages() {
       <img src="/api/images/${m.id}/preview" loading="lazy">
       <div class="meta">
         <b title="${m.filename || ''}">${m.filename || m.id}</b>
-        <div class="row"><span>${timeAgo(m.created_at)}</span>
-          <button class="danger" onclick="delImage('${m.id}')">删除</button></div>
+        <div class="row"><span>${m.id === pushedId ? '📌 今日推送中' : timeAgo(m.created_at)}</span>
+          ${m.id === pushedId
+            ? `<button onclick="unpushContent()" style="background:#f3f4f6;color:#dc2626">取消推送</button>`
+            : `<button onclick="pushContent('${m.id}')">推送到显示</button>`}
+          <button class="danger" onclick="delImage('${m.id}')${m.id === pushedId ? ';unpushContent()' : ''}">删除</button></div>
       </div>
     </div>`).join('');
+}
+async function pushContent(id) {
+  if (!confirm('推送到显示？照片时段将显示这张，当日有效，次日恢复自动')) return;
+  try {
+    await api('/images/content/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    toast('已推送到显示（当日有效）'); loadImages(); loadDaily(); loadDisplay();
+  } catch (e) { toast('失败: ' + e.message); }
+}
+async function unpushContent() {
+  if (!confirm('取消推送，恢复每日精选/自动选片？')) return;
+  try {
+    await api('/images/content/push', { method: 'DELETE' });
+    toast('已取消推送'); loadImages(); loadDaily(); loadDisplay();
+  } catch (e) { toast('失败: ' + e.message); }
 }
 async function loadDevices() {
   const { devices } = await api('/devices');
@@ -336,17 +538,249 @@ async function uploadFw() {
 }
 
 /* ---- 时段编排与设置 ---- */
+let freeModules = [];
+
+/* ---- 时段编排：24h 时序控件（磁盘分区式） ---- */
+const TL_TYPES = {
+  weather: { label: '天气卡片', icon: '⏰', color: '#0ea5e9' },
+  photo:   { label: '每日照片', icon: '🖼', color: '#10b981' },
+  free:    { label: '自由模块', icon: '✨', color: '#8b5cf6' },
+};
+const TL_MIN = 30;            // 最小时段（分钟）
+const TL_DAY = 1440;
+let tlSegs = [];              // [{start: 分钟, type}]，首段 00:00 起、末段到 24:00
+let tlDirty = false;          // 有未保存修改
+let tlDrag = null, tlJustDragged = false, tlMenuFor = -1;
+
+function tlParse(hhmm) { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + m; }
+function tlFmt(m) { m = ((m % TL_DAY) + TL_DAY) % TL_DAY; return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
+function tlEnd(i) { return i + 1 < tlSegs.length ? tlSegs[i + 1].start : TL_DAY; }
+function tlWidth(i) { return tlEnd(i) - tlSegs[i].start; }
+
+function tlCanon(segs) {
+  // 升序 + 相邻同类型合并（free 段须固定模块相同）+ 首段补到 00:00（跨天切开）
+  let out = [];
+  for (const s of segs.slice().sort((a, b) => a.start - b.start)) {
+    const prev = out[out.length - 1];
+    if (prev && prev.type === s.type && prev.module === s.module) continue;
+    out.push({ start: s.start, type: s.type, module: s.module || null });
+  }
+  if (!out.length) out.push({ start: 0, type: 'photo', module: null });
+  if (out[0].start !== 0) out.unshift({ start: 0, type: out[out.length - 1].type, module: out[out.length - 1].module });
+  const merged = [];
+  for (const s of out) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.type === s.type && prev.module === s.module) continue;
+    merged.push(s);
+  }
+  return merged;
+}
+function tlLoadSegs(segs) {
+  tlSegs = tlCanon((segs || []).map(x => ({ start: tlParse(x.start), type: x.type, module: x.module || null }))
+    .filter(s => Number.isFinite(s.start) && TL_TYPES[s.type]));
+  tlDirty = false; tlRender();
+}
+function tlTypeAt(date) {
+  const m = date.getHours() * 60 + date.getMinutes();
+  for (let i = 0; i < tlSegs.length; i++) {
+    if (tlSegs[i].start <= m && m < tlEnd(i)) return tlSegs[i].type;
+  }
+  return tlSegs.length ? tlSegs[tlSegs.length - 1].type : 'photo';
+}
+function renderRuler() {
+  const r = $('tlRuler');
+  r.innerHTML = '';
+  for (let h = 0; h <= 24; h++) {
+    const major = h % 2 === 0;
+    const t = document.createElement('div');
+    t.className = 'tick ' + (major ? 'major' : 'minor') + (h === 24 ? ' end' : '');
+    t.style.left = (h / 24 * 100) + '%';
+    if (major) t.textContent = (h % 24) + ':00';
+    r.appendChild(t);
+  }
+}
+function tlNowLine() {
+  const n = $('tlNow');
+  const d = new Date();
+  n.style.display = 'block';
+  n.style.left = ((d.getHours() * 60 + d.getMinutes()) / TL_DAY * 100) + '%';
+}
+function tlRender() {
+  const bar = $('timeline');
+  bar.innerHTML = '';
+  tlSegs.forEach((s, i) => {
+    const w = tlWidth(i);
+    const el = document.createElement('div');
+    el.className = 'tl-seg';
+    el.style.left = (s.start / TL_DAY * 100) + '%';
+    el.style.width = (w / TL_DAY * 100) + '%';
+    el.style.background = TL_TYPES[s.type].color;
+    if (i === tlSegs.length - 1) el.style.borderRight = 'none';
+    const t = TL_TYPES[s.type];
+    const fixed = s.type === 'free' && s.module;
+    const label = fixed ? `${t.icon} 📌 ${s.module}` : (t.icon + ' ' + t.label);
+    const hint = fixed ? `${t.label} · 固定「${s.module}」` : `${t.label}（每日轮换）`;
+    if (w >= 190) el.innerHTML = `<b>${t.icon}</b> ${fixed ? '📌 ' + escHtml(s.module) : t.label} <span class="tl-range">${tlFmt(s.start)}–${tlFmt(tlEnd(i))}</span>`;
+    else if (w >= 62) el.innerHTML = `${t.icon} ${fixed ? escHtml(s.module) : ''}`;
+    else el.textContent = t.icon;
+    el.title = `${hint} ${tlFmt(s.start)}–${tlFmt(tlEnd(i))}`;
+    el.addEventListener('click', ev => { if (tlJustDragged) return; ev.stopPropagation(); tlOpenMenu(i, ev); });
+    el.addEventListener('dblclick', ev => { ev.preventDefault(); tlSplit(i, ev); });
+    bar.appendChild(el);
+    if (i < tlSegs.length - 1) {
+      const h = document.createElement('div');
+      h.className = 'tl-handle';
+      h.style.left = (tlEnd(i) / TL_DAY * 100) + '%';
+      h.addEventListener('pointerdown', ev => tlStartDrag(i + 1, ev));
+      bar.appendChild(h);
+    }
+  });
+  tlNowLine();
+  $('tlCurrent').textContent = (() => {
+    const cur = tlSegs.find((s, i) => {
+      const d = new Date(); const m = d.getHours() * 60 + d.getMinutes();
+      return s.start <= m && m < tlEnd(i);
+    });
+    return cur ? (cur.type === 'free' && cur.module ? `自由模块 · ${cur.module}` : TL_TYPES[cur.type].label) : '—';
+  })();
+  $('tlLegend').innerHTML = Object.entries(TL_TYPES).map(([k, t]) =>
+    `<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${t.color};margin-right:4px"></i>${t.icon} ${t.label}</span>`).join('');
+  $('tlDirty').textContent = tlDirty ? '● 有未保存修改' : '';
+  renderRuler();
+}
+
+/* 拖动边界调整时段 */
+function tlStartDrag(j, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  const lo = tlSegs[j - 1].start + TL_MIN;
+  const hi = (j + 1 < tlSegs.length ? tlSegs[j + 1].start : TL_DAY) - TL_MIN;
+  tlDrag = { j, lo, hi, startX: ev.clientX };
+  $('timeline').classList.add('dragging');
+  tlMoveDrag(ev);
+}
+function tlMoveDrag(ev) {
+  if (!tlDrag) return;
+  const bar = $('timeline');
+  const r = bar.getBoundingClientRect();
+  let m = Math.round((ev.clientX - r.left) / r.width * TL_DAY);
+  m = Math.max(tlDrag.lo, Math.min(tlDrag.hi, m));
+  if (m !== tlSegs[tlDrag.j].start) { tlSegs[tlDrag.j].start = m; tlDirty = true; tlRender(); }
+}
+function tlEndDrag(ev) {
+  if (!tlDrag) return;
+  const moved = Math.abs(ev.clientX - tlDrag.startX) > 4;
+  tlDrag = null;
+  $('timeline').classList.remove('dragging');
+  if (moved) { tlJustDragged = true; setTimeout(() => tlJustDragged = false, 0); }
+}
+
+/* 点击某段 → 弹出菜单换内容 / 删除 */
+function tlOpenMenu(i, ev) {
+  tlMenuFor = i;
+  const wrap = $('timelineWrap');
+  const m = document.createElement('div');
+  m.id = 'tlMenu';
+  const s = tlSegs[i];
+  m.innerHTML = `
+    <div style="padding:3px 9px 7px;font-size:11px;color:#9ca3af">${tlFmt(s.start)}–${tlFmt(tlEnd(i))} · 选择内容类型</div>
+    ${Object.entries(TL_TYPES).map(([k, t]) =>
+      `<button class="tmi" data-type="${k}"><i class="dot" style="background:${t.color}"></i>${t.icon} ${t.label}</button>`).join('')}
+    ${s.type === 'free' ? `
+      <div class="sep"></div>
+      <div style="padding:3px 9px 6px;font-size:11px;color:#374151">📌 固定到模块（留空 = 每日轮换）</div>
+      <select class="tl-mod-sel" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+        <option value="">随机轮换（每日换一个模块）</option>
+        ${freeModules.filter(x => x.enabled).map(x => `<option value="${escHtml(x.name)}">${escHtml(x.name)}</option>`).join('')}
+      </select>` : ''}
+    ${tlSegs.length > 1 ? `<div class="sep"></div><button class="tmi del" data-del="1">🗑 删除此段（并入相邻时段）</button>` : ''}`;
+  m.addEventListener('pointerdown', ev => ev.stopPropagation());
+  m.querySelectorAll('[data-type]').forEach(b => b.addEventListener('click', () => {
+    tlSegs[tlMenuFor].type = b.dataset.type;
+    tlSegs[tlMenuFor].module = b.dataset.type === 'free' ? (tlSegs[tlMenuFor].module || null) : null;
+    tlHideMenu(); tlDirty = true; tlRender();
+  }));
+  const sel = m.querySelector('.tl-mod-sel');
+  if (sel) {
+    sel.value = s.module || '';
+    sel.addEventListener('change', () => {
+      tlSegs[tlMenuFor].module = sel.value || null;
+      tlHideMenu(); tlDirty = true; tlRender();
+    });
+  }
+  const del = m.querySelector('[data-del]');
+  if (del) del.addEventListener('click', () => tlDelete(tlMenuFor));
+  const old = $('tlMenu'); if (old) old.remove();
+  wrap.appendChild(m);
+  // 智能定位：优先显示在时序条上方；上方空间不足（如条贴近视口顶部）则翻转到条下方
+  m.style.visibility = 'hidden';
+  const bar = $('timeline');
+  const barRect = bar.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const x = ev.clientX - wrapRect.left;
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  m.style.left = Math.max(4, Math.min(x - mw / 2, wrap.clientWidth - mw - 8)) + 'px';
+  if (barRect.top - 8 >= mh) {
+    m.style.top = '-6px';
+    m.style.transform = 'translateY(-100%)';
+  } else {
+    m.style.top = (bar.offsetHeight + 24) + 'px';
+    m.style.transform = 'none';
+  }
+  m.style.visibility = '';
+}
+function tlHideMenu() { const m = $('tlMenu'); if (m) m.remove(); tlMenuFor = -1; }
+function tlDelete(i) {
+  if (tlSegs.length <= 1) return;
+  if (i === 0) { tlSegs[0].type = tlSegs[1].type; tlSegs.splice(1, 1); }  // 首段并入下一段
+  else tlSegs.splice(i, 1);                                              // 其余并入上一段
+  tlSegs = tlCanon(tlSegs);
+  tlHideMenu(); tlDirty = true; tlRender();
+}
+function tlSplit(i, ev) {
+  if (tlWidth(i) < TL_MIN * 2) return;
+  const bar = $('timeline');
+  const r = bar.getBoundingClientRect();
+  let m = Math.round((ev.clientX - r.left) / r.width * TL_DAY);
+  m = Math.max(tlSegs[i].start + TL_MIN, Math.min(tlEnd(i) - TL_MIN, m));
+  tlSegs.splice(i + 1, 0, { start: m, type: tlSegs[i].type, module: tlSegs[i].module || null });
+  tlHideMenu(); tlDirty = true; tlRender();
+}
+document.addEventListener('pointermove', tlMoveDrag);
+document.addEventListener('pointerup', tlEndDrag);
+document.addEventListener('click', ev => { if (!$('tlMenu') || $('tlMenu').contains(ev.target)) return; tlHideMenu(); });
+function escHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderFreeModules() {
+  $('freeMods').innerHTML = freeModules.map((m, i) => `
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+      <input class="fm-name" data-i="${i}" value="${escHtml(m.name)}" placeholder="模块名，如 宝宝背单词" style="width:120px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+      <input class="fm-prompt" data-i="${i}" value="${escHtml(m.prompt)}" placeholder="这段 prompt 描述想看什么内容（LLM 每天据此生成）" style="flex:1;min-width:200px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+      <input class="fm-style" data-i="${i}" value="${escHtml(m.style)}" placeholder="插画风格（可选）" style="width:150px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+      <label style="font-size:13px;white-space:nowrap"><input type="checkbox" class="fm-en" data-i="${i}" ${m.enabled ? 'checked' : ''}> 启用</label>
+      <button class="fm-del" data-i="${i}" style="background:#f3f4f6;color:#dc2626;padding:6px 10px">删除</button>
+    </div>`).join('');
+  $('freeMods').querySelectorAll('.fm-name').forEach(el => el.addEventListener('input', e => freeModules[+e.target.dataset.i].name = e.target.value));
+  $('freeMods').querySelectorAll('.fm-prompt').forEach(el => el.addEventListener('input', e => freeModules[+e.target.dataset.i].prompt = e.target.value));
+  $('freeMods').querySelectorAll('.fm-style').forEach(el => el.addEventListener('input', e => freeModules[+e.target.dataset.i].style = e.target.value));
+  $('freeMods').querySelectorAll('.fm-en').forEach(el => el.addEventListener('change', e => freeModules[+e.target.dataset.i].enabled = e.target.checked));
+  $('freeMods').querySelectorAll('.fm-del').forEach(el => el.addEventListener('click', e => { freeModules.splice(+e.target.dataset.i, 1); renderFreeModules(); }));
+}
+function addFreeModule() {
+  freeModules.push({ name: '', enabled: true, prompt: '', style: '' });
+  renderFreeModules();
+}
 async function loadSettings() {
   try {
     const s = await api('/settings');
-    $('sWeather').value = s.config.slot_weather;
-    $('sPhoto').value = s.config.slot_photo;
-    $('sNews').value = s.config.slot_news;
-    $('sWeatherEn').checked = !!s.config.slot_weather_enabled;
-    $('sNewsEn').checked = !!s.config.slot_news_enabled;
-    $('sNewsSource').value = s.config.news_source || '60s';
+    tlLoadSegs(s.config.slot_segments);
+    $('sFreeRotate').checked = !!s.config.free_rotate;
+    $('sStyle').value = s.config.weather_style || 'auto';
+    $('sStyleToday').textContent = s.status.weather_style_today ? `（今日：${s.status.weather_style_today}）` : '';
+    $('sWeatherNote').textContent = s.status.weather_ready ? '' : '（未配置和风天气 key，天气时段将回退显示照片）';
     $('sCity').value = s.config.qweather_city || '';
     $('sIpCity').textContent = s.status.ip_city ? `IP 定位：${s.status.ip_city}` : '';
+    freeModules = (s.config.free_modules || []).map(m => ({ name: m.name || '', enabled: !!m.enabled, prompt: m.prompt || '', style: m.style || '' }));
+    renderFreeModules();
+    $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置智谱 key，仅纯插画/文字' }）` : '';
   } catch (_) {}
 }
 async function saveSettings() {
@@ -355,16 +789,17 @@ async function saveSettings() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        slot_weather: $('sWeather').value.trim(),
-        slot_photo: $('sPhoto').value.trim(),
-        slot_news: $('sNews').value.trim(),
-        slot_weather_enabled: $('sWeatherEn').checked,
-        slot_news_enabled: $('sNewsEn').checked,
-        news_source: $('sNewsSource').value,
+        slot_segments: tlSegs.map(s => ({ start: tlFmt(s.start), type: s.type,
+          ...(s.module ? { module: s.module } : {}) })),
+        free_rotate: $('sFreeRotate').checked,
+        free_modules: freeModules.filter(m => m.name.trim()),
         qweather_city: $('sCity').value.trim(),
+        weather_style: $('sStyle').value,
       }),
     });
+    tlDirty = false; tlRender();
     $('sMsg').textContent = '已保存，立即生效'; setTimeout(() => $('sMsg').textContent = '', 2500);
+    loadSettings(); loadDisplay();
   } catch (e) { alert('保存失败: ' + e.message); }
 }
 
@@ -423,11 +858,13 @@ async function saveWifiConfig() {
   btn.disabled = false;
 }
 
-loadHealth(); loadSync(); loadDaily(); loadScores(); loadManualPick(); loadImages(); loadDevices(); loadFw();
+loadHealth(); loadDisplay(); loadSync(); loadDaily(); loadScores(); loadManualPick(); loadImages(); loadDevices(); loadFw();
 loadSettings();
 setInterval(loadDevices, 15000);
+setInterval(loadDisplay, 60000);
 setInterval(loadDaily, 600000);
 setInterval(loadSync, 5000);
+setInterval(() => { tlNowLine(); $('tlCurrent').textContent = TL_TYPES[tlTypeAt(new Date())].label; }, 60000);
 </script>
 </body>
 </html>

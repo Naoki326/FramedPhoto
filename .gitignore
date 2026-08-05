@@ -39,3 +39,9 @@ framedphoto.db*
 # NAS 同步照片（不入库，本地数据）
 services/photos/
 services/daily/
+
+# --- 运行时状态/缓存（不入库） ---
+services/app/free_cache/
+services/app/weather_cache/
+services/app/runtime_config.json
+services/sync_status.json

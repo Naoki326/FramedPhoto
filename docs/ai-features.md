@@ -74,6 +74,9 @@ python tools/analyze_photos.py /path/to/photos [-j 4]
 - 每次显示后**深度休眠**（`idf.py menuconfig` → `FRAMEDPHOTO_DEEP_SLEEP_HOURS`，
   默认 24h，0 = 禁用调试）
 - RTC 定时器唤醒 → 检查内容 → 无变化不刷屏直接再睡（上次内容存 NVS）
+- **刷新按钮**：按下立即拉取并刷新（`FRAMEDPHOTO_BUTTON_GPIO`，默认 GPIO 0 =
+  板上 BOOT 键，零接线）。深度休眠中按下走 EXT1 唤醒，强制刷新一次；
+  轮询等待中按下走中断，立即刷新。上传新图后按一下即可马上看到。
 - 长续航设计：E Ink 静态零功耗 + 深度休眠
 
 ## 说明

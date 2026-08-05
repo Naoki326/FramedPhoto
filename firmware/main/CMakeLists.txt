@@ -6,7 +6,8 @@ idf_component_register(
         "device_client.c"
         "display.c"
         "content_client.c"
+        "ota_client.c"
     INCLUDE_DIRS "."
-    REQUIRES gdey_epd esp_http_client esp_http_server cjson
-    PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_timer spiffs esp_app_format log esp_hw_support
+    REQUIRES gdey_epd esp_http_client esp_http_server cjson app_update mbedtls
+    PRIV_REQUIRES nvs_flash esp_wifi esp_event esp_netif esp_timer esp_app_format log esp_hw_support
 )

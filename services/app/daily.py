@@ -5,7 +5,7 @@ daily.py — 每日精选：历史上的今天选片 + 文案渲染。
   1. select_daily_photo(): 按今天"月-日"匹配所有年份的照片（需有 EXIF
      拍摄时间），回忆度 ≥ 阈值，随机加权（最近用过的降权）避免重复
   2. 无历史上的今天候选时：降级为"全局高分未用照片"
-  3. render_daily(): 选中的照片叠加文案（底部渐变条 + 白字）→ FPS6
+  3. render_daily(): 选中的照片叠加文案（底部圆角衬底块 + 白字）→ FPS6
      → 存入每日精选目录，content 接口优先返回
 
 手动上传的图片永远优先于每日精选（用户主动上传 = 用户想看的）。
@@ -21,7 +21,7 @@ from pathlib import Path
 from app import db
 from app.analyzer import generate_random_caption
 from app.config import settings
-from app.epd_image import prepare_image_with_caption
+from app.epd_image import is_landscape, prepare_image_with_caption
 
 DAILY_DIR = Path(settings.upload_dir).parent / "daily"
 DAILY_FILE = DAILY_DIR / "daily.fps6"
@@ -133,6 +133,7 @@ def render_daily() -> dict | None:
         "memory_score": photo.get("memory_score"),
         "width": prepared.width,
         "height": prepared.height,
+        "landscape": 1 if is_landscape(raw) else 0,  # Web 预览摆正用
         "rendered_at": db.now(),
     }
     DAILY_META.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")

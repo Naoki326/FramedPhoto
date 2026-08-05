@@ -46,7 +46,7 @@
 ## M5 — 打磨（真机阶段）
 - [ ] **NAS 同步完成后**：`cd services && python ../tools/analyze_photos.py ./photos -j 4` 全量 AI 分析（1200+ 张）
 - [ ] 真机联调：显示 / WiFi / 深度休眠全流程
-- [ ] 设备端 OTA 客户端（esp_ota 分区切换）
+- [x] 设备端 OTA 客户端（esp_ota 分区切换 + sha256 校验 + bootloader 回滚）
 - [ ] 断网重连 / 异常恢复
 - [ ] 部署：docker-compose 一键起服务
 

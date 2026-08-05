@@ -148,7 +148,11 @@ esp_err_t wifi_app_start(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "set mode failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wc), TAG, "set config failed");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start failed");
-    ESP_LOGI(TAG, "WiFi start: connecting to '%s'", ssid);
+    /* 禁用 modem sleep：省电模式会让 TCP 吞吐掉到几 KB/s（每收一包等 beacon
+     * 唤醒），相框拉取 1MB 图片会慢到 100s+。本设备运行时拉取内容为主，
+     * 省电靠后续深度休眠承担，故关闭 PS 换取带宽。 */
+    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "wifi ps off");
+    ESP_LOGI(TAG, "WiFi start: connecting to '%s' (modem sleep off)", ssid);
     return ESP_OK;
 }
 

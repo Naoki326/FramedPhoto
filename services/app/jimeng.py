@@ -30,7 +30,7 @@ SERVICE = "cv"
 VERSION = "2022-08-31"
 REQ_KEY = "jimeng_seedream46_cvtob"
 
-# 竖屏相框推荐尺寸（面积在 1K~2K 之间，宽高比接近 3:4）
+# 相框横放观看，横屏比例：4:3（推荐）或 16:9；面积在 1K~2K 之间
 RATIOS = {"4:3": (1728, 1296), "3:4": (1296, 1728), "16:9": (2048, 1152), "9:16": (1152, 2048)}
 
 _POLL_INTERVAL_S = 4
@@ -126,10 +126,15 @@ def _poll(task_id: str, timeout_s: int = _POLL_TIMEOUT_S) -> list[str]:
     raise TimeoutError(f"jimeng task timeout after {timeout_s}s")
 
 
-def generate_image(prompt: str, ratio: str = "3:4", timeout: int = 180) -> bytes | None:
-    """生成图片，返回图片字节。失败返回 None（已记日志）。"""
+def generate_image(prompt: str, ratio: str | None = None, timeout: int = 180) -> bytes | None:
+    """生成图片，返回图片字节。失败返回 None（已记日志）。
+
+    ratio 默认取配置 jimeng_ratio（横屏 4:3）——生成的横图在 prepare_image
+    时旋转 90°，相框横放观看即正立。
+    """
     try:
-        w, h = RATIOS.get(ratio, (1296, 1728))
+        ratio = ratio or settings.jimeng_ratio
+        w, h = RATIOS.get(ratio, (1728, 1296))
         task_id = _submit(prompt, w, h)
         logger.info("jimeng task submitted: %s", task_id)
         urls = _poll(task_id, timeout_s=timeout)
@@ -145,10 +150,10 @@ def generate_image(prompt: str, ratio: str = "3:4", timeout: int = 180) -> bytes
         return None
 
 
-def generate_cartoon_for_news(titles: list[str], ratio: str = "3:4") -> bytes | None:
+def generate_cartoon_for_news(titles: list[str], ratio: str | None = None) -> bytes | None:
     """根据新闻标题生成卡通风图片。返回图片字节或 None。"""
     top = titles[0] if titles else "今日热点"
     rest = "；".join(titles[1:4])
     prompt = (f"温馨可爱的卡通插画风格（扁平、暖色调、圆润），概括这条新闻：{top}。"
-              f"其他相关热点：{rest}。无文字，无水印，竖构图。")
+              f"其他相关热点：{rest}。无文字，无水印，横构图。")
     return generate_image(prompt, ratio=ratio)
