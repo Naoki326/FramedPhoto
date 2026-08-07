@@ -85,26 +85,20 @@ fetch_remote_stats() {
   ssh -p "$NAS_SSH_PORT" -o ConnectTimeout=15 "${SSH_KEEPALIVE[@]}" \
     "${NAS_SSH_USER}@${SSH_HOST}" \
     "cd '${NAS_PHOTO_DIR}' && find . -type f \
-       ! -name '*.mp4' ! -name '*.mov' ! -name '*.avi' ! -name '*.mkv' \
-       ! -name '*.zip' ! -name '*.rar' ! -name '*.7z' ! -name '*.tar' \
+       ! -path '*/@eaDir/*' ! -path '*/#recycle/*' ! -path '*/N8BookData/*' \
+       \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' \
+          -o -iname '*.heic' -o -iname '*.heif' -o -iname '*.webp' -o -iname '*.bmp' \
+          -o -iname '*.tif' -o -iname '*.tiff' -o -iname '*.cr2' -o -iname '*.nef' \
+          -o -iname '*.arw' -o -iname '*.dng' -o -iname '*.raf' -o -iname '*.orf' \
+          -o -iname '*.rw2' -o -iname '*.pef' -o -iname '*.srw' -o -iname '*.x3f' \) \
        -exec stat -c '%s' {} \; 2>/dev/null | awk '{s+=\$1; n++} END {print n, s}'" \
     || echo "0 0"
 }
 
-# 白名单：只同步图片文件（相框只需照片），其余一律排除
-# 规则按顺序匹配：先排除系统目录和非照片目录，再放行所有目录结构，
-# 再放行图片扩展名，最后排除一切非图片内容（视频/数据/文档等）
-EXCLUDES=(
-  --exclude='@eaDir' --exclude='#recycle' --exclude='.DS_Store' --exclude='Thumbs.db'
-  --exclude='N8BookData/' --exclude='婚礼视频/'
-  --include='*/'
-  --include='*.jpg' --include='*.jpeg' --include='*.png' --include='*.gif'
-  --include='*.heic' --include='*.heif' --include='*.webp' --include='*.bmp'
-  --include='*.tif' --include='*.tiff' --include='*.cr2' --include='*.nef'
-  --include='*.arw' --include='*.dng' --include='*.raf' --include='*.orf'
-  --include='*.rw2' --include='*.pef' --include='*.srw' --include='*.x3f'
-  --exclude='*'
-)
+# 白名单：只同步图片文件（相框只需照片），其余一律排除。
+# 共享过滤规则会匹配大小写扩展名；非图片内容由最后的 --exclude='*' 排除。
+# 不按业务目录名排除，避免「婚礼视频」等目录里的照片被一起漏掉。
+source "$(dirname "$0")/sync_nas_filters.sh"
 
 # IPv6 地址在 ssh/rsync 里用 [addr] 包裹
 if [[ "$NAS_SSH_HOST" == *":"* ]]; then
@@ -135,13 +129,18 @@ DRY_RUN=0
 
 # ---------- 启动：状态初始化 ----------
 log "同步 ${NAS_SSH_USER}@${SSH_HOST}:${NAS_PHOTO_DIR}/ -> ${LOCAL_PHOTO_DIR}/"
+STATS=$(fetch_remote_stats)
+TOTAL_FILES=$(echo "$STATS" | awk '{print $1}')
+TOTAL_BYTES=$(echo "$STATS" | awk '{print $2}')
+log "远程图片: ${TOTAL_FILES:-0} 个文件 / $(( ${TOTAL_BYTES:-0} / 1024 / 1024 )) MB"
 if [ "$DRY_RUN" -eq 1 ]; then
-  write_status "status" "running" "message" "演练模式（不传输）" "started_at" "$(date +%s)"
+  write_status \
+    "status" "running" "percent" 0 \
+    "total_files" "${TOTAL_FILES:-0}" "total_bytes" "${TOTAL_BYTES:-0}" \
+    "transferred_files" 0 "transferred_bytes" 0 \
+    "bwlimit_kb" "$NAS_RSYNC_BWLIMIT" \
+    "message" "演练模式（不传输）" "started_at" "$(date +%s)"
 else
-  STATS=$(fetch_remote_stats)
-  TOTAL_FILES=$(echo "$STATS" | awk '{print $1}')
-  TOTAL_BYTES=$(echo "$STATS" | awk '{print $2}')
-  log "远程照片: ${TOTAL_FILES} 个文件 / $((TOTAL_BYTES / 1024 / 1024)) MB"
   write_status \
     "status" "running" "percent" 0 \
     "total_files" "${TOTAL_FILES:-0}" "total_bytes" "${TOTAL_BYTES:-0}" \

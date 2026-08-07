@@ -48,12 +48,12 @@ PHOTO_LIB_DIR=./photos
   （`/opt/homebrew/bin/rsync`，当前 3.4.4）；两个候选都找不到才退回系统 rsync。
 - **群晖相片目录 POSIX 权限为 000**（SMB 共享权限模式下），脚本用
   `--chmod=Du+rwx,Dg+rx,Fu+rw,Fgo+r` 修复，否则本地文件不可读。
-- **默认排除**：`@eaDir` / `#recycle` / `.DS_Store` / `Thumbs.db`，以及视频
-  （mp4/mov/avi/mkv）和压缩包（zip/rar/7z/tar）——相框只需要静态图片。
+- **默认排除**：`@eaDir` / `#recycle` / `.DS_Store` / `Thumbs.db` / `N8BookData/`，以及所有非图片文件——相框只需要静态图片。
+  图片扩展名大小写不敏感（`.jpg` 与 `.JPG` 都会同步）；像 `婚礼视频/` 这样的目录不会整体排除，目录里的图片会保留，视频/音频仍会被白名单过滤。
 - **`sync_nas.sh` 的 `set -e` 陷阱**：列文件清单阶段日志无 `%`，进度循环里 grep
   非零会误杀脚本导致 rsync 变孤儿——进度循环与 wait 期间必须关闭 errexit，
   rsync 退出码由变量显式捕获。此修复勿回退。
-- 进度写入 `services/sync_status.json`（约每 5 秒一次），Web 管理台
+- 进度写入 `services/sync_status.json`（约每 5 秒一次），只统计白名单中的图片，Web 管理台
   「NAS 照片同步」板块展示；日志见 `docs/development.md`「运行中的服务」。
   状态文件路径由服务端 `__file__` 上溯三层计算，**勿改动该路径约定**。
 - IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。

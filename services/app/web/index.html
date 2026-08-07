@@ -386,7 +386,8 @@ async function loadDaily() {
 async function loadScores() {
   const box = $('scores');
   try {
-    const r = await fetch('/api/analysis/scores?limit=60');
+    // 管理台照片库应展示全部已分析照片（API 上限 500），而不是只显示前 60 张
+    const r = await fetch('/api/analysis/scores?limit=500');
     const { scores } = await r.json();
     if (!scores.length) { box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>'; return; }
     box.innerHTML = scores.map(s => `
