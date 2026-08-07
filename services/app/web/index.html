@@ -146,6 +146,10 @@
   <div class="panel" id="panel-sync" style="display:none">
     <section>
       <h2>NAS 照片同步</h2>
+      <div style="margin-bottom:10px">
+        <button onclick="startSync()" id="syncStartBtn">▶ 立即同步 NAS</button>
+        <span style="font-size:12px;color:#9ca3af;margin-left:8px">增量拉取 NAS 新增/变化的照片到本机照片库；与定时任务共用同一把锁，不会并发跑</span>
+      </div>
       <div id="syncbox"><div class="empty">加载中…</div></div>
     </section>
   </div>
@@ -423,11 +427,23 @@ async function unpickDaily() {
   try { await api('/images/daily/select', { method: 'DELETE' }); toast('已恢复自动选片'); loadManualPick(); loadDaily(); loadDisplay(); }
   catch (e) { toast('失败: ' + e.message); }
 }
+async function startSync() {
+  const btn = $('syncStartBtn');
+  btn.disabled = true;
+  try {
+    await api('/sync/start', { method: 'POST' });
+    toast('已开始 NAS 同步（后台运行）');
+    loadSync();
+  } catch (e) { toast('无法启动同步: ' + e.message); }
+  btn.disabled = false;
+}
 async function loadSync() {
   const box = $('syncbox');
+  const btn = $('syncStartBtn');
   try {
     const r = await fetch('/api/sync/status');
     const s = await r.json();
+    btn.disabled = (s.status === 'running' || s.status === 'stale');
     const fmt = b => b >= 1024**3 ? (b/1024**3).toFixed(2)+' GB' : (b/1024**2).toFixed(0)+' MB';
     const fmtRate = k => k >= 1024 ? (k/1024).toFixed(2)+' MB/s' : k.toFixed(1)+' KB/s';
     const avgKb = s.avg_speed_kb !== undefined && s.avg_speed_kb !== '' ? Number(s.avg_speed_kb) : null;
@@ -451,26 +467,67 @@ async function loadSync() {
       </div>`;
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
 }
+async function syncToNas(id) {
+  try {
+    await api('/images/' + id + '/sync-nas', { method: 'POST' });
+    toast('已开始同步到 NAS');
+  } catch (e) { toast('同步失败: ' + e.message); }
+  loadImages();
+  // 上传在后台执行：每 3 秒刷新一次，直到离开 uploading 状态
+  (function poll() {
+    setTimeout(async () => {
+      const { images } = await api('/images');
+      const it = images.find(x => x.id === id);
+      if (it && it.nas_status === 'uploading') poll();
+      else loadImages();
+    }, 3000);
+  })();
+}
+async function deleteLocalCopy(id) {
+  if (!confirm('NAS 副本已保存。删除后：内容库不再保留这张图（下载/预览/推送到显示不可用），照片仍保留在 NAS 照片库中。确定删除本地副本？')) return;
+  try {
+    await api('/images/' + id + '/delete-local', { method: 'POST' });
+    toast('已删除本地副本（NAS 保留）');
+    loadImages(); loadDaily(); loadDisplay();
+  } catch (e) { toast('删除失败: ' + e.message); }
+}
 async function loadImages() {
   const { images } = await api('/images');
   let pushedId = '';
   try { pushedId = (await api('/images/content/pushed')).pushed?.id || ''; } catch (_) {}
   const box = $('images');
   if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
-  box.innerHTML = images.map(m => `
+  box.innerHTML = images.map(m => {
+    const nas = m.nas_status || '';
+    let nasHtml = '';
+    if (nas === 'uploading') nasHtml = '<div class="row" style="color:#2563eb;font-size:12px;margin-top:4px">⏳ 同步到 NAS 中…</div>';
+    else if (nas === 'saved') nasHtml = '<div class="row" style="color:#16a34a;font-size:12px;margin-top:4px">✅ NAS 已保存</div>';
+    else if (nas === 'failed') nasHtml = '<div class="row" style="color:#dc2626;font-size:12px;margin-top:4px" title="' + escHtml(m.nas_error || '') + '">⚠️ NAS 同步失败</div>';
+    let actionHtml = '';
+    if (nas === 'saved') {
+      actionHtml = `<button onclick="deleteLocalCopy('${m.id}')" style="background:#f3f4f6;color:#dc2626">删除本地副本</button>`;
+    } else if (nas === 'uploading') {
+      actionHtml = `<button disabled>同步中…</button>`;
+    } else {
+      actionHtml = `<button onclick="syncToNas('${m.id}')">⬆ 同步到 NAS</button>`;
+    }
+    return `
     <div class="card">
       <img src="/api/images/${m.id}/thumb?t=${Math.floor(m.created_at)}" loading="lazy">
       <div class="meta">
         <b title="${m.filename || ''}">${m.filename || m.id}</b>
         <div class="row"><span>${m.id === pushedId ? '📌 今日推送中' : timeAgo(m.created_at)}</span></div>
+        ${nasHtml}
         <div class="row" style="margin-top:6px">
           <a href="/api/images/${m.id}/download" class="dl-btn" title="下载原图（全彩）">⬇ 下载原图</a>
           ${m.id === pushedId
             ? `<button onclick="unpushContent()" style="background:#f3f4f6;color:#dc2626">取消推送</button>`
             : `<button onclick="pushContent('${m.id}')">推送到显示</button>`}
-          <button class="danger" onclick="delImage('${m.id}')${m.id === pushedId ? ';unpushContent()' : ''}">删除</button></div>
+          ${actionHtml}
+          <button class="danger" onclick="delImage('${m.id}')" title="直接从内容库删除（NAS 副本不受影响）">删除</button></div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 async function pushContent(id) {
   if (!confirm('推送到显示？照片时段将显示这张，当日有效，次日恢复自动')) return;

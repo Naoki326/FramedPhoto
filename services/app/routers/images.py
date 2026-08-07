@@ -23,7 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
-from app import db, daily
+from app import db, daily, nas_sync
 from app.config import settings
 from app.epd_image import (
     HEADER_SIZE,
@@ -102,6 +102,65 @@ def _get_or_404(img_id: str) -> dict:
     if not meta:
         raise HTTPException(404, "image not found")
     return meta
+
+
+def _sync_nas_job(img_id: str, filename: str) -> None:
+    try:
+        result = nas_sync.push_content_image(img_id, filename)
+        db.update_image(
+            img_id,
+            nas_status="saved",
+            nas_path=result["remote_path"],
+            nas_sha256=result["sha256"],
+            nas_synced_at=db.now(),
+            nas_error="",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("sync content image to NAS failed: %s", img_id)
+        db.update_image(img_id, nas_status="failed", nas_error=str(exc)[:500])
+
+
+@router.post("/{img_id}/sync-nas")
+async def sync_image_to_nas(img_id: str, bg: BackgroundTasks):
+    """把内容库原图复制到 NAS 专用目录，并同步到本地 NAS 镜像。"""
+    meta = _get_or_404(img_id)
+    if not nas_sync.configured():
+        raise HTTPException(503, "NAS 未配置 SSH 连接参数")
+    original = UPLOAD_DIR / f"{img_id}.orig"
+    if not original.is_file():
+        raise HTTPException(409, "内容库原图不存在，无法同步到 NAS")
+    if meta.get("nas_status") == "uploading":
+        raise HTTPException(409, "这张图片正在同步到 NAS")
+    if meta.get("nas_status") == "saved":
+        return {"ok": True, "status": "saved", "nas_path": meta.get("nas_path", "")}
+    db.update_image(img_id, nas_status="uploading", nas_error="")
+    bg.add_task(_sync_nas_job, img_id, meta.get("filename", ""))
+    return {"ok": True, "status": "uploading", "id": img_id}
+
+
+@router.post("/{img_id}/delete-local")
+async def delete_local_after_nas(img_id: str):
+    """仅在 NAS 远端文件再次通过大小校验后，删除内容库本地副本。"""
+    meta = _get_or_404(img_id)
+    if meta.get("nas_status") != "saved" or not meta.get("nas_path"):
+        raise HTTPException(409, "请先完成 NAS 同步并通过远端校验")
+    original = UPLOAD_DIR / f"{img_id}.orig"
+    if not original.is_file():
+        raise HTTPException(409, "本地原图已经不存在")
+    if not nas_sync.verify_remote_file(meta["nas_path"], original.stat().st_size):
+        raise HTTPException(409, "NAS 文件校验失败，未删除本地文件")
+
+    for suffix in ("orig", "fps6", "thumb.jpg"):
+        path = UPLOAD_DIR / f"{img_id}.{suffix}"
+        if path.exists():
+            path.unlink()
+    for path in (str(original), str(original.resolve())):
+        db.delete_photo_score(path)
+    from app import runtime_config
+    if (runtime_config.load().get("content_push") or {}).get("id") == img_id:
+        runtime_config.save({"content_push": {}})
+    db.delete_image(img_id)
+    return {"ok": True, "deleted": img_id, "nas_path": meta["nas_path"]}
 
 
 @router.get("/daily/raw")

@@ -53,15 +53,46 @@ PHOTO_LIB_DIR=./photos
 - **`sync_nas.sh` 的 `set -e` 陷阱**：列文件清单阶段日志无 `%`，进度循环里 grep
   非零会误杀脚本导致 rsync 变孤儿——进度循环与 wait 期间必须关闭 errexit，
   rsync 退出码由变量显式捕获。此修复勿回退。
+- **互斥锁**：脚本用 `${TMPDIR:-/tmp}/framedphoto-sync-nas.lock` 目录锁防止并发；
+  手动按钮、launchd 定时任务同时触发时，后到者检测到锁会直接退出（exit 75），不会双跑 rsync。
 - 进度写入 `services/sync_status.json`（约每 5 秒一次），只统计白名单中的图片，Web 管理台
   「NAS 照片同步」板块展示；日志见 `docs/development.md`「运行中的服务」。
   状态文件路径由服务端 `__file__` 上溯三层计算，**勿改动该路径约定**。
 - IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。
-- 建议配置 SSH 免密（`ssh-copy-id`）后，把同步加入定时任务：
-  `crontab -e` → `0 3 * * * cd <repo> && ./scripts/sync_nas.sh >> /tmp/sync_nas.log 2>&1`
+- 建议配置 SSH 免密（`ssh-copy-id`）。
 
-> ⚠️ 若首次全量同步已在后台进行，不要并发再跑一个 `sync_nas.sh`（rsync 无锁）；
-> 等状态文件变为 `done` 或先 `./scripts/sync_nas.sh --help` 查看互斥选项。
+### 定时任务（macOS launchd）
+
+```bash
+# 安装：登录时运行一次，之后每 3600 秒（1 小时）运行一次
+./scripts/install_sync_schedule.sh install
+
+# 其他命令
+./scripts/install_sync_schedule.sh status     # 查看状态
+./scripts/install_sync_schedule.sh uninstall  # 卸载
+
+# 自定义间隔（秒）
+SYNC_INTERVAL=7200 ./scripts/install_sync_schedule.sh install
+```
+
+launchd 任务 `com.framedphoto.nas-sync` 与 Web 服务 `com.framedphoto.service` 相互独立；
+同步失败不会影响管理台。日志：`services/sync_nas_launchd.log`。
+
+### Web 管理台手动同步
+
+「同步」页有 **立即同步 NAS** 按钮：后台启动一次增量同步，正在同步时按钮禁用，
+状态条实时显示进度/限速/均速。与定时任务共用同一把锁，不会并发。
+
+### 内容库照片 → NAS
+
+内容库每张图片提供 **⬆ 同步到 NAS**：把原图复制到 NAS 专用目录
+（`NAS_UPLOAD_DIR`，默认 `<NAS_PHOTO_DIR>/FramedPhoto`），校验远端大小一致后标记
+「✅ NAS 已保存」，并在本地照片库 `photos/FramedPhoto/` 建立镜像供照片库区显示。
+
+- 同步成功后出现 **删除本地副本** 按钮：再次校验远端文件后删除内容库本地副本
+  （删除后内容库不再保留该图，NAS 与照片库镜像保留）；
+- 未同步成功前不会出现删除按钮，远端校验失败也不会删除；
+- 删除会顺带清掉内容库的评分记录，镜像评分记录保留在照片库。
 
 ### 流量说明
 

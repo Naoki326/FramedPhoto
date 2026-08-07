@@ -43,13 +43,18 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         );
 
         CREATE TABLE IF NOT EXISTS images (
-            id          TEXT PRIMARY KEY,
-            filename    TEXT DEFAULT '',
-            fps6_path   TEXT DEFAULT '',
-            width       INTEGER,
-            height      INTEGER,
-            landscape   INTEGER DEFAULT 0,
-            created_at  REAL
+            id              TEXT PRIMARY KEY,
+            filename        TEXT DEFAULT '',
+            fps6_path       TEXT DEFAULT '',
+            width           INTEGER,
+            height          INTEGER,
+            landscape       INTEGER DEFAULT 0,
+            created_at      REAL,
+            nas_status      TEXT DEFAULT '',
+            nas_path        TEXT DEFAULT '',
+            nas_sha256      TEXT DEFAULT '',
+            nas_synced_at   REAL,
+            nas_error       TEXT DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS firmware (
@@ -86,7 +91,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                      ("wifi_ssid", "ALTER TABLE devices ADD COLUMN wifi_ssid TEXT DEFAULT ''"),
                      ("wifi_password", "ALTER TABLE devices ADD COLUMN wifi_password TEXT DEFAULT ''"),
                      ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0"),
-                     ("landscape", "ALTER TABLE images ADD COLUMN landscape INTEGER DEFAULT 0")):
+                     ("landscape", "ALTER TABLE images ADD COLUMN landscape INTEGER DEFAULT 0"),
+                     ("nas_status", "ALTER TABLE images ADD COLUMN nas_status TEXT DEFAULT ''"),
+                     ("nas_path", "ALTER TABLE images ADD COLUMN nas_path TEXT DEFAULT ''"),
+                     ("nas_sha256", "ALTER TABLE images ADD COLUMN nas_sha256 TEXT DEFAULT ''"),
+                     ("nas_synced_at", "ALTER TABLE images ADD COLUMN nas_synced_at REAL"),
+                     ("nas_error", "ALTER TABLE images ADD COLUMN nas_error TEXT DEFAULT ''")):
         try:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({ddl.split()[2]})")]
             if col not in cols:
@@ -146,6 +156,16 @@ def get_image(img_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def update_image(img_id: str, **fields) -> None:
+    if not fields:
+        return
+    with _lock:
+        conn = _get_conn()
+        sets = ", ".join(f"{key}=?" for key in fields)
+        conn.execute(f"UPDATE images SET {sets} WHERE id=?", (*fields.values(), img_id))
+        conn.commit()
+
+
 def list_images() -> list[dict]:
     with _lock:
         rows = _get_conn().execute("SELECT * FROM images ORDER BY created_at DESC").fetchall()
@@ -202,6 +222,13 @@ def get_photo_score(path: str) -> dict | None:
     with _lock:
         row = _get_conn().execute("SELECT * FROM photo_scores WHERE path=?", (path,)).fetchone()
     return dict(row) if row else None
+
+
+def delete_photo_score(path: str) -> None:
+    with _lock:
+        conn = _get_conn()
+        conn.execute("DELETE FROM photo_scores WHERE path=?", (path,))
+        conn.commit()
 
 
 def list_photo_scores(limit: int = 200, analyzed_only: bool = True) -> list[dict]:

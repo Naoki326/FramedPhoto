@@ -76,6 +76,28 @@ os.replace(tmp, path)
 PY
 }
 
+# ---------- 互斥锁（手动按钮与 launchd 不能并发 rsync） ----------
+LOCK_DIR="${TMPDIR:-/tmp}/framedphoto-sync-nas.lock"
+acquire_lock() {
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    trap 'rm -rf "$LOCK_DIR"' EXIT
+    return 0
+  fi
+  local pid=""
+  [ -f "$LOCK_DIR/pid" ] && pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    log "已有同步任务运行中（pid $pid），本次跳过"
+    exit 75
+  fi
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+  printf '%s\n' "$$" > "$LOCK_DIR/pid"
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
+acquire_lock
+
 # ---------- 远程照片统计（排除视频，进度分母） ----------
 # SSH keepalive：长连接（限速下可达数小时）中途空闲易被 NAT/对端断开，
 # 每 30s 发保活包，4 次无响应才判定死连接
