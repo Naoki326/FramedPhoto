@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
+  <title id="title">FramedPhoto 可定制时间块示意图</title>
+  <desc id="desc">24 小时内容时间轴，可拖动边界、切分区间并切换天气、每日照片和自由模块。</desc>
+  <rect width="1200" height="430" fill="#ffffff"/>
+  <text x="60" y="62" fill="#111827" font-size="35" font-weight="700" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">24h 内容时段编排</text>
+  <text x="60" y="103" fill="#6b7280" font-size="22" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">拖动边界调整 · 双击切开 · 点击切换内容类型 · 最小时段 30 分钟</text>
+
+  <!-- 轨道 -->
+  <rect x="60" y="145" width="1080" height="88" rx="14" fill="#e5e7eb"/>
+  <rect x="60" y="145" width="360" height="88" rx="14" fill="#0050c8"/>
+  <rect x="420" y="145" width="450" height="88" fill="#ff9c00"/>
+  <rect x="870" y="145" width="180" height="88" fill="#7c3aed"/>
+  <rect x="1050" y="145" width="90" height="88" rx="0 14 14 0" fill="#111827"/>
+
+  <!-- 可拖动边界 -->
+  <g stroke="#ffffff" stroke-width="5" stroke-linecap="round">
+    <line x1="420" y1="157" x2="420" y2="221"/>
+    <line x1="870" y1="157" x2="870" y2="221"/>
+    <line x1="1050" y1="157" x2="1050" y2="221"/>
+  </g>
+  <g fill="#ffffff" font-size="25" font-weight="700" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+    <text x="240" y="199">天气</text>
+    <text x="645" y="199">每日照片</text>
+    <text x="960" y="199">自由模块</text>
+    <text x="1095" y="199">照片</text>
+  </g>
+
+  <!-- 时间刻度 -->
+  <g fill="#6b7280" font-size="20" text-anchor="middle" font-family="SFMono-Regular, Menlo, monospace">
+    <text x="60" y="270" text-anchor="start">00:00</text>
+    <text x="420" y="270">08:00</text>
+    <text x="870" y="270">18:00</text>
+    <text x="1050" y="270">22:00</text>
+    <text x="1140" y="270" text-anchor="end">24:00</text>
+  </g>
+
+  <!-- 内容说明 -->
+  <g font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">
+    <circle cx="78" cy="335" r="9" fill="#0050c8"/>
+    <text x="100" y="343" fill="#374151" font-size="23">天气 + 日历</text>
+    <circle cx="330" cy="335" r="9" fill="#ff9c00"/>
+    <text x="352" y="343" fill="#374151" font-size="23">AI 每日精选</text>
+    <circle cx="610" cy="335" r="9" fill="#7c3aed"/>
+    <text x="632" y="343" fill="#374151" font-size="23">可绑定任意自由模块</text>
+    <circle cx="1010" cy="335" r="9" fill="#111827"/>
+    <text x="1032" y="343" fill="#374151" font-size="23">照片兜底</text>
+  </g>
+  <text x="60" y="392" fill="#9ca3af" font-size="20" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">管理台保存后即时生效；跨午夜的同一自由模块会复用同一张卡片，不会在 0 点突然换图。</text>
+</svg>

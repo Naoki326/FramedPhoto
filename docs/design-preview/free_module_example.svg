@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1600" role="img" aria-labelledby="title desc">
+  <title id="title">FramedPhoto 自由模块示意图</title>
+  <desc id="desc">读诗自由模块：LLM 生成文字，插画服务生成画面，最后叠加到电子纸卡片上。</desc>
+  <rect width="1200" height="1600" fill="#ffffff"/>
+
+  <!-- 顶部信息栏 -->
+  <rect width="1200" height="190" fill="#0050c8"/>
+  <text x="70" y="82" fill="#ffffff" font-size="46" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">今日自由模块</text>
+  <text x="70" y="140" fill="#ffffff" font-size="27" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">每天生成一张不一样的图文卡片</text>
+  <text x="1130" y="90" text-anchor="end" fill="#ffffff" font-size="28" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">08月05日</text>
+
+  <!-- 简洁的国风插画示意 -->
+  <circle cx="930" cy="470" r="92" fill="#ff9c00"/>
+  <path d="M0 790 L250 520 L430 700 L680 420 L940 700 L1200 500 L1200 1010 L0 1010 Z" fill="#00963f"/>
+  <path d="M0 880 L300 650 L540 820 L800 590 L1200 840 L1200 1060 L0 1060 Z" fill="#0050c8"/>
+  <path d="M0 1000 Q280 920 560 1010 T1200 980 L1200 1120 L0 1120 Z" fill="#ffffff"/>
+  <path d="M75 810 Q150 755 225 810 M150 755 L150 700" fill="none" stroke="#000000" stroke-width="16" stroke-linecap="round"/>
+  <path d="M1010 700 Q1065 650 1120 700" fill="none" stroke="#000000" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- 文字卡片 -->
+  <rect x="56" y="1120" width="1088" height="350" rx="28" fill="#16161a"/>
+  <text x="96" y="1190" fill="#ff9c00" font-size="30" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">✨ 读诗</text>
+  <text x="96" y="1290" fill="#ffffff" font-size="68" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">《山居秋暝》</text>
+  <text x="96" y="1370" fill="#ffffff" font-size="35" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">空山新雨后，天气晚来秋。</text>
+  <text x="96" y="1430" fill="#8dd4ff" font-size="25" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">LLM 文案  ×  AI 插画  ×  六色渲染</text>
+</svg>
