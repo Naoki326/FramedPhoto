@@ -71,10 +71,10 @@ FramedPhoto 的核心不是“显示天气”，而是让同一块屏幕在一�
 自由模块由一段主题 prompt 驱动：LLM 生成当天的标题、正文和画面描述，图像模型生成插画，服务端再把文字叠加到画面并转换成电子纸可显示的六色卡片。
 
 <p align="center">
-  <img src="docs/design-preview/free_module_example.svg" alt="自由模块读诗卡片示意图" width="300">
+  <img src="docs/design-preview/history_story_example.png" alt="历史故事自由模块生成示例：智斗盗马贼" width="300">
 </p>
 
-<p align="center"><sub>自由模块示意：LLM 文案 × AI 插画 × 文字叠加 × 六色渲染</sub></p>
+<p align="center"><sub>真实生成示例：历史故事《智斗盗马贼》 · LLM 文案 × AI 插画 × 文字叠加 × 六色渲染</sub></p>
 
 内置模块可以直接使用，也可以在管理台添加自己的主题：
 
@@ -97,8 +97,10 @@ LLM 失败时降级为模块标题或纯文字卡片；文生图失败时仍可�
 - 支持跨午夜时段，同一模块跨 0 点继续复用同一张卡片。
 
 <p align="center">
-  <img src="docs/design-preview/time_blocks.svg" alt="可定制内容时间块示意图" width="760">
+  <img src="docs/design-preview/settings_page.png" alt="FramedPhoto 服务端设置页：时间轴与自由模块 prompt" width="1100">
 </p>
+
+<p align="center"><sub>真实服务端设置页：上方是 24 小时时间轴，下方是可自由编辑的模块名称、prompt、插画风格与启用状态</sub></p>
 
 例如可以在管理台编排出这样的日程：
 
@@ -114,7 +116,7 @@ LLM 失败时降级为模块标题或纯文字卡片；文生图失败时仍可�
 
 每个时间块最短 30 分钟，最后一段自动延续到 24:00。配置保存后即时生效，设备下一次轮询时就会按照新的内容计划工作。
 
-> 上面的图片是软件渲染/功能示意，不代表真实硬件实拍。个人照片不会提交到公开仓库，照片目录已由 `.gitignore` 忽略，仅保留在本地/NAS。
+> 上面的每日照片示意图与自由模块图片均不含家人照片；设置页截图来自本地服务端管理台，不代表真实硬件实拍。个人照片不会提交到公开仓库，照片目录已由 `.gitignore` 忽略，仅保留在本地/NAS。
 
 ## 系统架构
 
