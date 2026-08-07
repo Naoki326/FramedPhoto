@@ -61,10 +61,10 @@ FramedPhoto 的核心不是“显示天气”，而是让同一块屏幕在一�
 服务端会从照片库中匹配今天的月-日，结合 AI 回忆度评分挑选一张照片，自动生成一句文案并渲染到画面上。没有同日照片时，会降级到全局高分且近期未展示的照片；也可以在管理台手动指定今日精选。
 
 <p align="center">
-  <img src="docs/design-preview/daily_today.png" alt="每日照片与回忆文案预览" width="300">
+  <img src="docs/design-preview/daily_photo_example.svg" alt="每日照片与回忆文案示意图" width="300">
 </p>
 
-<p align="center"><sub>每日精选：照片 + 拍摄日期 + AI 回忆文案，经 Spectra 6 六色量化后上屏</sub></p>
+<p align="center"><sub>每日精选示意：照片 + 拍摄日期 + AI 回忆文案，经 Spectra 6 六色量化后上屏</sub></p>
 
 ### 2. 自由模块：每天生成一张新的图文卡片
 
