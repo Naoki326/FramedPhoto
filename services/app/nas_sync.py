@@ -10,6 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from app import db
@@ -113,7 +114,11 @@ def _remote_name(image_id: str, filename: str) -> str:
 
 def _clone_photo_score(original: Path, mirror: Path, filename: str) -> None:
     """把上传时已有的评分复制到 NAS 镜像；没有评分则留下待分析记录。"""
+    # photo_scores 的 key 可能是绝对路径、services 下相对路径（services/...）或
+    # 上传目录相对路径（uploads/...），全试一遍避免因路径形式不一致克隆失败
     candidates = [str(original), str(original.resolve())]
+    if original.is_relative_to(SERVICE_ROOT):
+        candidates.append(str(original.relative_to(SERVICE_ROOT)))
     score = None
     for path in candidates:
         score = db.get_photo_score(path)
@@ -170,6 +175,12 @@ def push_content_image(image_id: str, filename: str) -> dict:
     mirror.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(original, mirror)
     _clone_photo_score(original, mirror, filename)
+    # 确保镜像在照片库立即可见：克隆后仍未标记已分析则补一个标记
+    # （无评分时按 0 分出现在照片库，至少用户能看得到这张已推送到 NAS 的图）
+    mirror_key = str(mirror.relative_to(SERVICE_ROOT)) if mirror.is_relative_to(SERVICE_ROOT) else str(mirror)
+    score = db.get_photo_score(mirror_key)
+    if score and not score.get("analyzed_at"):
+        db.upsert_photo_score(mirror_key, analyzed_at=time.time())
 
     return {
         "remote_path": remote_path,

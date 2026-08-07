@@ -2,7 +2,12 @@
 
 用标准库 sqlite3，模块级单连接 + 线程锁（uvicorn 单进程场景足够）。
 连接懒初始化，便于测试时通过环境变量指向临时库。
+
+连接自愈：每次访问前 stat 数据库文件，若文件已被替换/重写
+（inode、mtime、size 任一变化），自动重建连接，避免长驻连接
+读到陈旧数据（此前出现过的“上传后推送 404”即由此引起）。
 """
+import os
 import sqlite3
 import threading
 import time
@@ -11,16 +16,52 @@ from pathlib import Path
 from app.config import settings
 
 _conn: sqlite3.Connection | None = None
+_conn_sig: tuple[int, int, int] | None = None  # (st_ino, st_mtime_ns, st_size) 建连时的文件快照
 _lock = threading.Lock()
 
 
+def _db_path() -> Path:
+    """解析数据库实际路径（相对路径按当前 cwd 归一化）。"""
+    return Path(settings.db_path).resolve()
+
+
+def _file_sig(path: Path) -> tuple[int, int, int] | None:
+    """文件签名；文件不存在时返回 None。"""
+    try:
+        st = path.stat()
+        return (st.st_ino, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _open_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_db_path(), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    _init_schema(conn)
+    return conn
+
+
 def _get_conn() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(settings.db_path, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _init_schema(_conn)
+    global _conn, _conn_sig
+    if _conn is not None and _conn_sig == _file_sig(_db_path()):
+        return _conn
+    # 连接缺失，或数据库文件已被替换/重写 → 重建连接
+    old = _conn
+    _conn = None
+    _conn_sig = None
+    if old is not None:
+        try:
+            # 尝试把 WAL 落回主文件，避免重建后丢失未 checkpoint 的数据
+            old.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.Error:
+            pass
+        try:
+            old.close()
+        except sqlite3.Error:
+            pass
+    _conn = _open_conn()
+    _conn_sig = _file_sig(_db_path())
     return _conn
 
 

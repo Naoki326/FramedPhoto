@@ -496,8 +496,10 @@ async function loadImages() {
   let pushedId = '';
   try { pushedId = (await api('/images/content/pushed')).pushed?.id || ''; } catch (_) {}
   const box = $('images');
-  if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
-  box.innerHTML = images.map(m => {
+  // 已推送到 NAS 的图不再出现在内容库（本地镜像在照片库 photos/FramedPhoto 中展示）
+  const visible = images.filter(m => (m.nas_status || '') !== 'saved');
+  if (!visible.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
+  box.innerHTML = visible.map(m => {
     const nas = m.nas_status || '';
     let nasHtml = '';
     if (nas === 'uploading') nasHtml = '<div class="row" style="color:#2563eb;font-size:12px;margin-top:4px">⏳ 同步到 NAS 中…</div>';
