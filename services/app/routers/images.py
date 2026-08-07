@@ -9,8 +9,10 @@ images.py — 图片上传 / 转换 / 内容管理（SQLite 持久化）。
 - GET  /content      内容清单（设备轮询，取最新一张）
 """
 import hashlib
+import io
 import json
 import logging
+import re
 import struct
 import uuid
 from datetime import datetime
@@ -19,6 +21,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
+from PIL import Image
 
 from app import db, daily
 from app.config import settings
@@ -268,6 +271,32 @@ async def display_upload(file: UploadFile = File(...)):
     return _display_meta()
 
 
+@router.post("/display/raw-fps6")
+async def display_upload_raw_fps6(file: UploadFile = File(...)):
+    """校准用：接收已量化的 FPS6 文件直接显示，不重新量化。
+
+    用于 tools/generate_calibration_chart.py 生成的校准图——该图以设备
+    nibble 直写六种纯色，必须绕过服务端量化，否则纯色会被重算破坏。
+    校验 magic/尺寸/长度后原样写入 DISPLAY_FILE，设备刷新即显示。
+    """
+    raw = await file.read()
+    if len(raw) < 20 or raw[:4] != b"FPS6":
+        raise HTTPException(400, "not a FPS6 file")
+    w, h = struct.unpack_from("<II", raw, 4)
+    if (w, h) != (settings.epd_width, settings.epd_height):
+        raise HTTPException(400,
+                            f"size must be {settings.epd_width}x{settings.epd_height}, got {w}x{h}")
+    if len(raw) != 20 + w * h // 2:
+        raise HTTPException(400, "truncated FPS6 payload")
+    DISPLAY_FILE.write_bytes(raw)
+    DISPLAY_META.write_text(json.dumps({
+        "filename": file.filename or "calibration.fps6",
+        "landscape": 1,   # 校准图按横放视角设计，设备横放观看
+        "ts": db.now(),
+    }, ensure_ascii=False), encoding="utf-8")
+    return _display_meta()
+
+
 @router.get("/display/current")
 async def display_current():
     """当前显示：手动临时图优先，否则为时段自动内容。"""
@@ -343,6 +372,14 @@ async def get_raw(img_id: str):
 @router.get("/{img_id}/preview")
 async def get_preview(img_id: str):
     meta = _get_or_404(img_id)
+    # 优先显示全彩原图（orig）；探测 PNG/JPEG，其他格式退回设备格式预览
+    orig = UPLOAD_DIR / f"{img_id}.orig"
+    if orig.exists():
+        head = orig.read_bytes()[:12]
+        if head[:8] == b"\x89PNG\r\n\x1a\n":
+            return Response(content=orig.read_bytes(), media_type="image/png")
+        if head[:3] == b"\xff\xd8\xff":
+            return Response(content=orig.read_bytes(), media_type="image/jpeg")
     raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
     prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
@@ -350,11 +387,65 @@ async def get_preview(img_id: str):
                     media_type="image/png")
 
 
+THUMB_WIDTH = 400  # 内容库缩略图宽度（省流量）
+
+
+@router.get("/{img_id}/thumb")
+async def get_thumb(img_id: str):
+    """内容库缩略图：原图缩放为 ~400px 宽 JPEG，磁盘缓存，省流量。"""
+    _get_or_404(img_id)
+    thumb = UPLOAD_DIR / f"{img_id}.thumb.jpg"
+    if thumb.exists():
+        return Response(content=thumb.read_bytes(), media_type="image/jpeg")
+    orig = UPLOAD_DIR / f"{img_id}.orig"
+    if orig.exists():
+        img = Image.open(io.BytesIO(orig.read_bytes()))
+    else:
+        meta = db.get_image(img_id)
+        raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
+        w, h = struct.unpack_from("<II", raw, 4)
+        prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+        img = Image.open(io.BytesIO(preview_png_landscape(prepared, bool(meta.get("landscape")))))
+    img = img.convert("RGB")
+    w, h = img.size
+    if w > THUMB_WIDTH:
+        img = img.resize((THUMB_WIDTH, max(1, round(h * THUMB_WIDTH / w))), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=82)
+    data = buf.getvalue()
+    try:
+        thumb.write_bytes(data)
+    except OSError:
+        pass
+    return Response(content=data, media_type="image/jpeg")
+
+
+@router.get("/{img_id}/download")
+async def download_orig(img_id: str):
+    """下载原图（.orig 全彩文件，带文件名）。"""
+    meta = _get_or_404(img_id)
+    orig = UPLOAD_DIR / f"{img_id}.orig"
+    if not orig.exists():
+        raise HTTPException(404, "no original file")
+    head = orig.read_bytes()[:12]
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        ct = "image/png"
+    elif head[:3] == b"\xff\xd8\xff":
+        ct = "image/jpeg"
+    else:
+        ct = "application/octet-stream"
+    fname = (meta.get("filename") or img_id).strip() or img_id
+    fname_ascii = re.sub(r"[^A-Za-z0-9._\-]", "_", fname)
+    cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname)}"
+    return Response(content=orig.read_bytes(), media_type=ct,
+                    headers={"Content-Disposition": cd})
+
+
 @router.delete("/{img_id}")
 async def delete_image(img_id: str):
     meta = _get_or_404(img_id)
     # 删除磁盘文件（尽力而为）
-    for suffix in ("orig", "fps6"):
+    for suffix in ("orig", "fps6", "thumb.jpg"):
         p = UPLOAD_DIR / f"{img_id}.{suffix}"
         if p.exists():
             p.unlink()

@@ -28,6 +28,9 @@
   .card .meta { padding: 8px 10px; font-size: 12px; color: #6b7280; }
   .card .meta b { display: block; color: #111; font-size: 13px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .card .row { display: flex; justify-content: space-between; align-items: center; }
+  .dl-btn { display: inline-block; background: #f3f4f6; color: #374151; border-radius: 6px;
+    padding: 8px 12px; font-size: 13px; text-decoration: none; cursor: pointer; }
+  .dl-btn:hover { background: #e5e7eb; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
   th { color: #6b7280; font-weight: 500; }
@@ -455,10 +458,12 @@ async function loadImages() {
   if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
   box.innerHTML = images.map(m => `
     <div class="card">
-      <img src="/api/images/${m.id}/preview" loading="lazy">
+      <img src="/api/images/${m.id}/thumb?t=${Math.floor(m.created_at)}" loading="lazy">
       <div class="meta">
         <b title="${m.filename || ''}">${m.filename || m.id}</b>
-        <div class="row"><span>${m.id === pushedId ? '📌 今日推送中' : timeAgo(m.created_at)}</span>
+        <div class="row"><span>${m.id === pushedId ? '📌 今日推送中' : timeAgo(m.created_at)}</span></div>
+        <div class="row" style="margin-top:6px">
+          <a href="/api/images/${m.id}/download" class="dl-btn" title="下载原图（全彩）">⬇ 下载原图</a>
           ${m.id === pushedId
             ? `<button onclick="unpushContent()" style="background:#f3f4f6;color:#dc2626">取消推送</button>`
             : `<button onclick="pushContent('${m.id}')">推送到显示</button>`}

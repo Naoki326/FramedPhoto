@@ -33,8 +33,12 @@ ROW_BYTES = W // 2
 IC_ROW = ROW_BYTES // 2
 
 
-def _device_view(payload: bytes) -> Image.Image:
-    """按固件逻辑重组 [IC0 区][IC1 区] 并逆映射为屏幕像素图（LTR）。"""
+def _device_view(payload: bytes, colors=SPECTRA6_PALETTE) -> Image.Image:
+    """按固件逻辑重组 [IC0 区][IC1 区] 并逆映射为屏幕像素图（LTR）。
+
+    colors: 颜色表，默认理想色板（等价于 v1）；传 profile.device 可模拟
+    校准后的真机观感（与 preview_png 一致）。
+    """
     ic0 = bytearray()
     ic1 = bytearray()
     for y in range(H):
@@ -49,8 +53,8 @@ def _device_view(payload: bytes) -> Image.Image:
             for k in range(IC_ROW):
                 b = ic[base + k]
                 local_x = 2 * k  # LTR：字节 k ↔ 像素对 (2k, 2k+1)
-                px[x_start + local_x, y] = SPECTRA6_PALETTE[NIBBLES.index(b >> 4)]
-                px[x_start + local_x + 1, y] = SPECTRA6_PALETTE[NIBBLES.index(b & 0xF)]
+                px[x_start + local_x, y] = colors[NIBBLES.index(b >> 4)]
+                px[x_start + local_x + 1, y] = colors[NIBBLES.index(b & 0xF)]
     return img
 
 
@@ -77,7 +81,7 @@ def _random_like_image() -> bytes:
 def test_device_render_matches_preview():
     src = _random_like_image()
     p = prepare_image(src, dither=False)
-    device = _device_view(p.raw_index)
+    device = _device_view(p.raw_index, colors=p.profile.device)
     server = Image.open(io.BytesIO(preview_png(p))).convert("RGB")
 
     assert device.size == server.size == (W, H)

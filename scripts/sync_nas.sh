@@ -91,11 +91,19 @@ fetch_remote_stats() {
     || echo "0 0"
 }
 
-# 默认排除：视频/压缩包/系统目录（相框只需照片，省流量）
+# 白名单：只同步图片文件（相框只需照片），其余一律排除
+# 规则按顺序匹配：先排除系统目录和非照片目录，再放行所有目录结构，
+# 再放行图片扩展名，最后排除一切非图片内容（视频/数据/文档等）
 EXCLUDES=(
   --exclude='@eaDir' --exclude='#recycle' --exclude='.DS_Store' --exclude='Thumbs.db'
-  --exclude='*.mp4' --exclude='*.mov' --exclude='*.avi' --exclude='*.mkv'
-  --exclude='*.zip' --exclude='*.rar' --exclude='*.7z' --exclude='*.tar'
+  --exclude='N8BookData/' --exclude='婚礼视频/'
+  --include='*/'
+  --include='*.jpg' --include='*.jpeg' --include='*.png' --include='*.gif'
+  --include='*.heic' --include='*.heif' --include='*.webp' --include='*.bmp'
+  --include='*.tif' --include='*.tiff' --include='*.cr2' --include='*.nef'
+  --include='*.arw' --include='*.dng' --include='*.raf' --include='*.orf'
+  --include='*.rw2' --include='*.pef' --include='*.srw' --include='*.x3f'
+  --exclude='*'
 )
 
 # IPv6 地址在 ssh/rsync 里用 [addr] 包裹

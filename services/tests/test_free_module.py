@@ -26,6 +26,7 @@ def _no_external_apis(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "jimeng_secret_key", "")
     monkeypatch.setattr(settings, "imagegen_url", "")
     monkeypatch.setattr(fm, "CACHE_DIR", tmp_path / "free_cache")
+    monkeypatch.setattr(fm, "HISTORY_FILE", tmp_path / "free_history.json")
     monkeypatch.setattr(fm, "free_enabled", lambda: True)
     monkeypatch.setattr(fm, "_cache_fps6", None)   # 防跨测试泄漏
     monkeypatch.setattr(fm, "_cache_ts", 0)
@@ -186,3 +187,33 @@ def test_render_free_saves_card_png_to_library(monkeypatch):
     n2 = len(db.list_images())
     fm.render_free_fps6()
     assert len(db.list_images()) == n2
+
+
+def test_detect_tiling_flags_bad_and_accepts_good():
+    """平铺自检：构造坏数据（重复小块）应判异常，正常数据应通过。"""
+    import struct
+    from app.epd_image import prepare_image
+    from app.free_module import _detect_tiling
+
+    # 正常：随机彩色图
+    good_img = Image.new("RGB", (1600, 1200))
+    px = good_img.load()
+    import random
+    rnd = random.Random(42)
+    for y in range(1200):
+        for x in range(1600):
+            px[x, y] = (rnd.randint(0, 255), rnd.randint(0, 255), rnd.randint(0, 255))
+    buf = io.BytesIO(); good_img.save(buf, "PNG")
+    good = prepare_image(buf.getvalue(), dither=False).data
+    assert _detect_tiling(good) is False, "正常图不应判异常"
+
+    # 坏：把一张小图平铺成 4x3 网格（模拟 API 坏图）
+    small = good_img.resize((400, 400))
+    bad_img = Image.new("RGB", (1600, 1200))
+    bpx = bad_img.load()
+    for y in range(1200):
+        for x in range(1600):
+            bpx[x, y] = small.getpixel((x % 400, y % 400))
+    buf2 = io.BytesIO(); bad_img.save(buf2, "PNG")
+    bad = prepare_image(buf2.getvalue(), dither=False).data
+    assert _detect_tiling(bad) is True, "平铺坏图应判异常"

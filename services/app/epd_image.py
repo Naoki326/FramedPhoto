@@ -36,6 +36,10 @@ FORMAT_4BIT_DUAL_IC = 1
 PALETTE_VERSION = 1
 HEADER_SIZE = 20
 
+# 校准 profile 文件：tools/calibrate_profile.py 拍照采样后写入，
+# 存在时自动覆盖 SPECTRA6_PROFILE_V2 的设备观感色（device）。
+CALIBRATED_PROFILE_PATH = Path(__file__).resolve().parent / "profiles" / "calibrated.json"
+
 DEVICE_WIDTH = 1200
 DEVICE_HEIGHT = 1600
 
@@ -48,6 +52,7 @@ NIBBLES = (0x0, 0x1, 0x2, 0x3, 0x5, 0x6)
 NIBBLE_TO_INDEX = {n: i for i, n in enumerate(NIBBLES)}
 
 # Spectra 6 六色近似 sRGB —— 顺序与设备 nibble 一一对应（索引 i -> NIBBLES[i]）
+# 保留为「理想色板」，用于 v1 行为兼容与 A/B 对比。
 SPECTRA6_PALETTE: list[tuple[int, int, int]] = [
     (0, 0, 0),          # 0x0 黑
     (255, 255, 255),    # 0x1 白
@@ -58,12 +63,93 @@ SPECTRA6_PALETTE: list[tuple[int, int, int]] = [
 ]
 
 
+@dataclass(frozen=True)
+class Spectra6Profile:
+    """调色板双色模型：
+
+    targets: 量化目标色（输入色空间的代表色，决定像素归到哪个墨水）
+    device:  该墨水在真机上的实际观感颜色（仅用于预览/模拟，不参与量化）
+    distance: 颜色距离算法（"rgb" 欧氏 / "oklab" 感知）
+    """
+    name: str
+    targets: tuple[tuple[int, int, int], ...]
+    device: tuple[tuple[int, int, int], ...]
+    distance: str = "oklab"
+
+    def __post_init__(self) -> None:
+        if len(self.targets) != len(self.device) != 6:
+            raise ValueError("profile must contain exactly 6 colors")
+
+
+# v1：历史行为。量化目标与设备观感都用理想 sRGB 色，RGB 欧氏距离。
+SPECTRA6_PROFILE_V1 = Spectra6Profile(
+    name="v1",
+    targets=tuple(SPECTRA6_PALETTE),
+    device=tuple(SPECTRA6_PALETTE),
+    distance="rgb",
+)
+
+# v2：感知量化（OKLab 距离）。device 初值为手机实拍采样（黑白为占位，
+# 待校准图拍照后由 calibrate_profile.py 覆盖为 calibrated.json）。
+SPECTRA6_PROFILE_V2 = Spectra6Profile(
+    name="v2",
+    targets=tuple(SPECTRA6_PALETTE),
+    device=(
+        (0, 0, 0),          # 0x0 黑（占位，待校准）
+        (255, 255, 255),    # 0x1 白（占位，待校准）
+        (149, 151, 50),     # 0x2 黄：手机实拍 GDEB0709E01
+        (109, 21, 17),      # 0x3 红：手机实拍
+        (33, 65, 127),      # 0x5 蓝：手机实拍
+        (86, 120, 95),      # 0x6 绿：手机实拍
+    ),
+    distance="oklab",
+)
+
+_PROFILES: dict[str, Spectra6Profile] = {
+    p.name: p for p in (SPECTRA6_PROFILE_V1, SPECTRA6_PROFILE_V2)
+}
+
+
+def _load_calibrated_profile() -> Spectra6Profile | None:
+    """读取 calibrate_profile.py 生成的校准 JSON，覆盖 v2 的 device 色。"""
+    if not CALIBRATED_PROFILE_PATH.exists():
+        return None
+    import json
+    try:
+        data = json.loads(CALIBRATED_PROFILE_PATH.read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    device = [tuple(c) for c in data.get("device", [])]
+    if len(device) != 6 or not all(len(c) == 3 for c in device):
+        return None
+    return Spectra6Profile(
+        name="v2",
+        targets=SPECTRA6_PROFILE_V2.targets,
+        device=tuple(device),
+        distance="oklab",
+    )
+
+
+_calibrated = _load_calibrated_profile()
+if _calibrated is not None:
+    _PROFILES["v2"] = _calibrated
+    SPECTRA6_PROFILE_V2 = _calibrated
+
+
+def get_profile(name: str) -> Spectra6Profile:
+    try:
+        return _PROFILES[name]
+    except KeyError:
+        raise ValueError(f"unknown profile {name!r}, available: {sorted(_PROFILES)}") from None
+
+
 @dataclass
 class PreparedImage:
     width: int
     height: int
     data: bytes            # FPS6 完整字节流（含头）
-    palette: list[tuple[int, int, int]]
+    palette: list[tuple[int, int, int]]   # 兼容字段 = profile.targets
+    profile: Spectra6Profile = SPECTRA6_PROFILE_V1
 
     @property
     def raw_index(self) -> bytes:
@@ -98,18 +184,75 @@ def _fit(image: Image.Image, width: int, height: int) -> Image.Image:
     return _cover(img, width, height)
 
 
-def _nearest_index(rgb: tuple[int, int, int]) -> int:
-    r, g, b = rgb
+# ---- 感知颜色（OKLab，Björn Ottosson）----
+# 预计算缓存：输入颜色按 16 级/通道量化后查表（最多 4096 项），避免
+# 每像素重复做 sRGB 线性化与立方根，1.2M 像素下代价可忽略。
+
+
+def _rgb_to_oklab(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    r, g, b = (c / 255.0 for c in rgb)
+
+    def lin(c: float) -> float:
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = lin(r), lin(g), lin(b)
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+    l_, m_, s_ = l ** (1 / 3), m ** (1 / 3), s ** (1 / 3)
+    return (
+        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    )
+
+
+_OKLAB_CACHE: dict[int, tuple[float, float, float]] = {}
+
+
+def _oklab_cached(rgb: tuple[int, int, int]) -> tuple[float, float, float]:
+    key = ((int(rgb[0]) >> 4) << 8) | ((int(rgb[1]) >> 4) << 4) | (int(rgb[2]) >> 4)
+    v = _OKLAB_CACHE.get(key)
+    if v is None:
+        v = _rgb_to_oklab((int(rgb[0]), int(rgb[1]), int(rgb[2])))
+        _OKLAB_CACHE[key] = v
+    return v
+
+
+def _nearest_index(rgb: tuple[int, int, int],
+                   targets: tuple[tuple[int, int, int], ...] = tuple(SPECTRA6_PALETTE),
+                   distance: str = "rgb") -> int:
+    """返回 rgb 距离最近的目标色索引。distance: "rgb" | "oklab"。"""
     best, best_d = 0, float("inf")
-    for i, (pr, pg, pb) in enumerate(SPECTRA6_PALETTE):
-        d = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2
-        if d < best_d:
-            best, best_d = i, d
-    return best
+    if distance == "rgb":
+        r, g, b = rgb
+        for i, (pr, pg, pb) in enumerate(targets):
+            d = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2
+            if d < best_d:
+                best, best_d = i, d
+        return best
+    if distance == "oklab":
+        lab = _oklab_cached(rgb)
+        labs = [None] * len(targets)
+        for i, t in enumerate(targets):
+            labs[i] = _oklab_cached(t)
+        for i, tl in enumerate(labs):
+            d = ((lab[0] - tl[0]) ** 2 + (lab[1] - tl[1]) ** 2 + (lab[2] - tl[2]) ** 2)
+            if d < best_d:
+                best, best_d = i, d
+        return best
+    raise ValueError(f"unknown distance {distance!r}")
 
 
-def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]]) -> list[list[int]]:
-    """6 色板 Floyd–Steinberg 抖动，返回每像素色板索引 0..5。"""
+def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
+                     profile: Spectra6Profile) -> list[list[int]]:
+    """6 色板 Floyd–Steinberg 抖动，返回每像素色板索引 0..5。
+
+    误差在 RGB 空间传播（与 v1 一致），颜色选择按 profile 的
+    targets + distance（"oklab" 时为感知最近）。
+    """
+    targets = profile.targets
+    distance = profile.distance
     h, w = len(pixels), len(pixels[0])
     err: list[list[tuple[float, float, float]]] = [[(0.0, 0.0, 0.0)] * w for _ in range(h)]
     out: list[list[int]] = [[0] * w for _ in range(h)]
@@ -121,9 +264,9 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]]) -> list[list[int]
             r2 = max(0, min(255, r + er))
             g2 = max(0, min(255, g + eg))
             b2 = max(0, min(255, b + eb))
-            idx = _nearest_index((r2, g2, b2))
+            idx = _nearest_index((r2, g2, b2), targets, distance)
             out[y][x] = idx
-            pr, pg, pb = SPECTRA6_PALETTE[idx]
+            pr, pg, pb = targets[idx]
             qr, qg, qb = (r2 - pr), (g2 - pg), (b2 - pb)
             if x + 1 < w:
                 err[y][x + 1] = _add(err[y][x + 1], (qr * 7 / 16, qg * 7 / 16, qb * 7 / 16))
@@ -158,14 +301,17 @@ def _to_device_layout(indices: list[list[int]], width: int) -> bytes:
     return bytes(buf)
 
 
-def _quantize_to_layout(img: Image.Image, width: int, height: int, dither: bool) -> bytes:
+def _quantize_to_layout(img: Image.Image, width: int, height: int, dither: bool,
+                        profile: Spectra6Profile) -> bytes:
     """RGB 图像（已适配目标尺寸）-> FPS6 数据区。"""
+    targets, distance = profile.targets, profile.distance
     pix = list(img.getdata())
     if dither:
         rows = [pix[y * width:(y + 1) * width] for y in range(height)]
-        indices = _floyd_steinberg(rows)
+        indices = _floyd_steinberg(rows, profile)
     else:
-        indices = [[_nearest_index(pix[y * width + x]) for x in range(width)] for y in range(height)]
+        indices = [[_nearest_index(pix[y * width + x], targets, distance)
+                    for x in range(width)] for y in range(height)]
     return _to_device_layout(indices, width)
 
 
@@ -181,18 +327,25 @@ def prepare_image(
     width: int = DEVICE_WIDTH,
     height: int = DEVICE_HEIGHT,
     dither: bool = True,
+    profile: str | Spectra6Profile = "v2",
 ) -> PreparedImage:
-    """输入任意格式图片字节，输出 FPS6 设备格式。"""
+    """输入任意格式图片字节，输出 FPS6 设备格式。
+
+    profile: "v1"（历史 RGB 距离 + 理想色观感）或 "v2"（OKLab 感知距离
+    + 校准观感色）；默认 v2。
+    """
     if (width, height) != (DEVICE_WIDTH, DEVICE_HEIGHT):
         raise ValueError(f"only {DEVICE_WIDTH}x{DEVICE_HEIGHT} supported, got {width}x{height}")
+
+    prof = get_profile(profile) if isinstance(profile, str) else profile
 
     img = Image.open(io.BytesIO(image_bytes))
     img = _fit(img, width, height)
 
     # 量化+抖动集中在 _quantize_to_layout 内完成（之前这里冗余算过一遍，从未使用）
-    raw = _quantize_to_layout(img, width, height, dither)
+    raw = _quantize_to_layout(img, width, height, dither, prof)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
-                         palette=SPECTRA6_PALETTE)
+                         palette=list(prof.targets), profile=prof)
 
 
 # ---------- 文案渲染（每日精选） ----------
@@ -292,6 +445,7 @@ def prepare_image_with_caption(
     width: int = DEVICE_WIDTH,
     height: int = DEVICE_HEIGHT,
     dither: bool = True,
+    profile: str | Spectra6Profile = "v2",
 ) -> PreparedImage:
     """照片 + 底部文案渲染：底部圆角衬底块 + 日期小字 + 文案白字。
 
@@ -319,32 +473,48 @@ def prepare_image_with_caption(
         if with_caption:
             _draw_caption(canvas, width, height, caption, date_str)
 
-    raw = _quantize_to_layout(canvas, width, height, dither)
+    prof = get_profile(profile) if isinstance(profile, str) else profile
+    raw = _quantize_to_layout(canvas, width, height, dither, prof)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
-                         palette=SPECTRA6_PALETTE)
+                         palette=list(prof.targets), profile=prof)
 
 
 # 字节值 -> (偶数像素 RGB, 奇数像素 RGB) 的 256 项查找表（预览用）
 # 非法 nibble（如 0x4/0x7+）在合法数据中不应出现，兜底映射为黑
-_BYTE_LOOKUP = [
-    (
-        SPECTRA6_PALETTE[NIBBLE_TO_INDEX.get(b >> 4, 0)],
-        SPECTRA6_PALETTE[NIBBLE_TO_INDEX.get(b & 0xF, 0)],
-    )
-    for b in range(256)
-]
+# 预览用 prepared.profile.device 渲染：模拟真机观感（校准后贴近实拍）。
+_BYTE_LOOKUP_CACHE: dict[str, list[tuple[tuple[int, int, int], tuple[int, int, int]]]] = {}
+
+
+def _byte_lookup(profile: Spectra6Profile) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
+    lut = _BYTE_LOOKUP_CACHE.get(profile.name)
+    if lut is None:
+        colors = profile.device
+        lut = [
+            (
+                colors[NIBBLE_TO_INDEX.get(b >> 4, 0)],
+                colors[NIBBLE_TO_INDEX.get(b & 0xF, 0)],
+            )
+            for b in range(256)
+        ]
+        _BYTE_LOOKUP_CACHE[profile.name] = lut
+    return lut
 
 
 def preview_png(prepared: PreparedImage) -> bytes:
-    """把 FPS6 数据区还原成 PNG 预览（Web/CLI 查看转换效果）。"""
+    """把 FPS6 数据区还原成 PNG 预览（Web/CLI 查看转换效果）。
+
+    用 prepared.profile.device 颜色渲染：v2（已校准）时模拟真机观感，
+    v1 时等价于历史行为（理想色）。
+    """
     raw = prepared.raw_index
     row_bytes = prepared.width // 2
     img = Image.new("RGB", (prepared.width, prepared.height))
     px = img.load()
+    lookup = _byte_lookup(prepared.profile)
     for y in range(prepared.height):
         base = y * row_bytes
         for k in range(row_bytes):
-            even_rgb, odd_rgb = _BYTE_LOOKUP[raw[base + k]]
+            even_rgb, odd_rgb = lookup[raw[base + k]]
             x = 2 * k  # LTR：字节 k 对应像素对 (2k, 2k+1)
             px[x, y] = even_rgb
             px[x + 1, y] = odd_rgb

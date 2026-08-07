@@ -26,13 +26,22 @@ import hashlib
 import io
 import json
 import logging
+import struct
 from pathlib import Path
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from app.config import settings
-from app.epd_image import DEVICE_HEIGHT, DEVICE_WIDTH, find_cjk_font, prepare_image
+from app.epd_image import (
+    DEVICE_HEIGHT,
+    DEVICE_WIDTH,
+    PreparedImage,
+    SPECTRA6_PALETTE,
+    find_cjk_font,
+    prepare_image,
+    preview_png_landscape,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,11 +158,42 @@ _LLM_SYSTEM = (
     ' "body": "正文，1-3 行，每行不超过 14 字，总长不超过 40 字，简体中文",\n'
     ' "image_prompt": "文生图画面描述（40-70 字，只描述画面，禁止出现任何文字、字母、水印）"}\n'
     "要求：\n"
-    "- 内容每天不同：结合今天的日期、季节、节气随机挑选，避免与最近几天重复；\n"
+    "- 内容每天不同：结合今天的日期、季节、节气随机挑选；\n"
+    "- 用户会给出「最近已展示过的内容」，必须从中避让，选择不同的新内容；\n"
     "- title 是核心内容（单词、诗名、故事名、新闻一句话等）；\n"
     "- body 是释义 / 诗句 / 故事梗概（背单词类可含英文单词+中文释义，诗类写诗句原文）；\n"
     "- image_prompt 只描述画面，绝不能包含任何文字、字母、数字、水印。"
 )
+
+# 生成历史记录（模块 → 最近标题列表），用于注入 LLM 避免重复
+HISTORY_FILE = CACHE_DIR / "free_history.json"
+
+
+def _load_history() -> dict:
+    try:
+        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _record_title(module_name: str, title: str) -> None:
+    """记录本次生成的标题（每个模块保留最近 20 个）。"""
+    if not title:
+        return
+    try:
+        h = _load_history()
+        lst = h.setdefault(module_name, [])
+        lst.append(title)
+        h[module_name] = lst[-20:]
+        HISTORY_FILE.write_text(json.dumps(h, ensure_ascii=False, indent=1),
+                                encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _recent_titles(module_name: str, n: int = 8) -> list[str]:
+    """该模块最近生成的标题（不含今天的，供避让）。"""
+    return _load_history().get(module_name, [])[-n:]
 
 
 def _llm_content(module: dict, today: dt.date) -> dict | None:
@@ -161,8 +201,14 @@ def _llm_content(module: dict, today: dt.date) -> dict | None:
     key = settings.zhipu_api_key
     if not key:
         return None
+    recent = _recent_titles(module["name"])
+    avoid = ""
+    if recent:
+        avoid = (f"最近已展示过的内容（必须避让，选择不同的）："
+                 f"{'、'.join(recent)}。\n")
     user = (f"今天是 {today.year}年{today.month}月{today.day}日。\n"
             f"模块主题：{module['prompt']}\n"
+            f"{avoid}"
             f"插画风格：{module.get('style', '')}\n"
             "只输出 JSON。")
     try:
@@ -371,6 +417,42 @@ def _render_text_card(module: dict, title: str, body: str) -> bytes | None:
     return buf.getvalue()
 
 
+# ═══════════════════════ 生成后自检（防坏图） ═══════════════════════
+
+# 平铺检测阈值：正常插画行自相关得分通常 >140；坏图（API 偶发返回
+# 重复平铺/错乱插画）得分显著低于 60。取 100 留有充分余量。
+TILE_SCORE_OK = 100.0
+
+
+def _detect_tiling(data: bytes) -> bool:
+    """检测 FPS6 内容是否重复平铺（生成异常特征）。True = 异常，应丢弃重试。
+
+    原理：正常插画相邻内容差异大；平铺异常时以 400px/800px 偏移的行自相关
+    极低（同图重复）。返回 False 表示内容正常。
+    """
+    try:
+        w, h = struct.unpack_from("<II", data, 4)
+        if (w, h) != (DEVICE_WIDTH, DEVICE_HEIGHT) or len(data) != 20 + w * h // 2:
+            return True
+        prepared = PreparedImage(width=w, height=h, data=data,
+                                 palette=SPECTRA6_PALETTE)
+        img = Image.open(io.BytesIO(preview_png_landscape(prepared, True))).convert("RGB")
+        W, H = img.size
+        px = img.load()
+        vals = []
+        for yy in range(80, H - 80, 60):
+            row = [sum(px[x, yy][c] for c in range(3)) for x in range(W)]
+            s400 = sum(abs(row[x] - row[x + 400]) for x in range(0, W - 400, 8)) / ((W - 400) // 8)
+            s800 = sum(abs(row[x] - row[x + 800]) for x in range(0, W - 800, 8)) / ((W - 800) // 8)
+            vals.append(min(s400, s800))
+        if not vals:
+            return True
+        return (sum(vals) / len(vals)) < TILE_SCORE_OK
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("free tiling check failed: %s", exc)
+        return True   # 解析失败视为异常，走重试/降级
+
+
 # ═══════════════════════ 归档到内容库 ═══════════════════════
 
 def _save_to_library(module_name: str, png: bytes) -> None:
@@ -459,20 +541,30 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
             return data
 
     content = _llm_content(module, base.date())
+    if content and content.get("title"):
+        _record_title(module["name"], content["title"])
     title = (content or {}).get("title") or module["name"]
     body = (content or {}).get("body") or ""
     image_prompt = ((content or {}).get("image_prompt")
                     or f"{module.get('style', '温馨插画')}，主题：{module['prompt']}")
 
     data = None
-    raw = _generate_illustration(image_prompt)
-    if raw:
-        png = _compose_card(raw, module["name"], title, body)
-        if png:
-            _save_to_library(module["name"], png)   # 加文字后的完整卡片 PNG 原图入库
-            data = prepare_image(png, dither=True).data
+    # 生成 + 平铺自检；异常时重试一次（重新调即梦出图），仍异常走文字卡降级
+    for attempt in range(2):
+        raw = _generate_illustration(image_prompt)
+        png = _compose_card(raw, module["name"], title, body) if raw else None
+        if not png:
+            break
+        data = prepare_image(png, dither=True).data
+        if _detect_tiling(data):
+            logger.warning("free card tiling detected, retry %d: %s", attempt + 1, module["name"])
+            data = None
+            continue
+        _save_to_library(module["name"], png)   # 自检通过才入库
+        break
+
     if not data:
-        # 纯文字卡片（PNG → FPS6）
+        # 纯文字卡片（PNG → FPS6）降级
         png = _render_text_card(module, title, body)
         if png:
             data = prepare_image(png, dither=True).data

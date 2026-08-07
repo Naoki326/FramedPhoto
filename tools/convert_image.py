@@ -24,11 +24,13 @@ def main() -> int:
     ap.add_argument("input", help="输入图片路径")
     ap.add_argument("-o", "--output", help="输出 .fps6 文件路径")
     ap.add_argument("--no-dither", action="store_true", help="关闭抖动")
+    ap.add_argument("--profile", default="v2", choices=["v1", "v2"],
+                    help="调色板：v1=历史 RGB 距离；v2=OKLab 感知距离（默认）")
     ap.add_argument("--preview", help="同时输出 PNG 预览到此路径")
     args = ap.parse_args()
 
     raw = Path(args.input).read_bytes()
-    p = prepare_image(raw, dither=not args.no_dither)
+    p = prepare_image(raw, dither=not args.no_dither, profile=args.profile)
 
     out = Path(args.output or f"{Path(args.input).stem}.fps6")
     out.write_bytes(p.data)

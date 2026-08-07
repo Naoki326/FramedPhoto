@@ -1,0 +1,38 @@
+{
+  "profile": "v2",
+  "device": [
+    [
+      61,
+      83,
+      103
+    ],
+    [
+      143,
+      173,
+      191
+    ],
+    [
+      165,
+      175,
+      94
+    ],
+    [
+      132,
+      60,
+      67
+    ],
+    [
+      40,
+      90,
+      153
+    ],
+    [
+      44,
+      104,
+      104
+    ]
+  ],
+  "captured_at": "2026-08-06T08:40:12",
+  "source_chart": "tools/generate_calibration_chart.py (1600x1200 landscape)",
+  "note": "device 色顺序与 NIBBLES 一致：[黑,白,黄,红,蓝,绿]"
+}

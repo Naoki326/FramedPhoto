@@ -1,4 +1,7 @@
 """FramedPhoto 服务端入口。"""
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,6 +11,19 @@ from fastapi.responses import HTMLResponse
 from app.config import settings
 from app.routers import analysis, devices, images, ota, sync
 from app.routers import settings as settings_router
+
+# ── 应用日志落盘（services/framedphoto.log，与 launchd 日志一致）──
+# uvicorn 默认只配置自身 logger；这里显式配置 root，让 app.* 的
+# WARNING/INFO（自由模块生成异常、入库失败等）可靠写入日志文件。
+_log_path = Path(__file__).resolve().parent.parent / "framedphoto.log"
+_log_handler = RotatingFileHandler(_log_path, maxBytes=5 * 1024 * 1024, backupCount=3,
+                                   encoding="utf-8")
+_log_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO),
+                    handlers=[_log_handler], force=True)
+# 保留 uvicorn 自身日志走原有 handler（stderr / access）
+logging.getLogger("uvicorn").propagate = False
 
 app = FastAPI(
     title="FramedPhoto Service",
