@@ -1,82 +1,241 @@
-# FramedPhoto
+<div align="center">
+  <h1>FramedPhoto</h1>
+  <p><strong>把照片、天气和一点点 AI，放进一块每天都会更新的彩色电子纸。</strong></p>
+  <p>
+    <a href="https://github.com/Naoki326/FramedPhoto/stargazers"><img src="https://img.shields.io/github/stars/Naoki326/FramedPhoto?style=flat-square" alt="GitHub stars"></a>
+    <a href="https://github.com/Naoki326/FramedPhoto/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Naoki326/FramedPhoto?style=flat-square" alt="License"></a>
+    <img src="https://img.shields.io/badge/platform-ESP32--S3-ff6f00?style=flat-square" alt="Platform: ESP32-S3">
+    <img src="https://img.shields.io/badge/backend-FastAPI-009688?style=flat-square" alt="Backend: FastAPI">
+    <img src="https://img.shields.io/badge/display-E--Ink%20Spectra%206-355c7d?style=flat-square" alt="Display: E Ink Spectra 6">
+  </p>
+</div>
 
-基于 **7.09 寸 E Ink Spectra 6 彩色电子纸模组（GDEB0709E01）** + **ESP32** 的数字相框。
+<p align="center">
+  <img src="docs/design-preview/blue_v4.png" alt="FramedPhoto 彩色电子纸界面渲染预览" width="760">
+</p>
 
-一个把照片搬上彩色电子纸的端到端项目：ESP32 固件负责驱动 E Ink 屏幕和联网取图，Python 服务端负责图片转换、内容管理与 OTA 分发。
+<p align="center"><sub>界面渲染预览 · 1200 × 1600 · E Ink Spectra 6 六色</sub></p>
+
+---
+
+## 这不只是一个数字相框
+
+普通数字相框只会循环播放照片。**FramedPhoto 把一块低功耗彩色电子纸，变成家里的个人信息窗口：**
+
+- 今天显示天气和日历，晚上切换成一张照片；
+- AI 从照片库里找出“历史上的今天”，并配上一句回忆文案；
+- 你给自由模块写一段 prompt，它就能每天生成一张不同的图文卡片；
+- 设备主动从服务端拉取内容，显示完成后深度休眠，安静、省电地待在墙上。
+
+这是一个从 **ESP32 固件、FastAPI 服务端、图片渲染，到 NAS 与 AI 内容生成** 的完整端到端项目。
+
+## 一眼看懂
+
+| 能力 | FramedPhoto 做什么 |
+| --- | --- |
+| **照片回忆** | 上传照片、管理内容、AI 评分，自动挑选“历史上的今天” |
+| **每日窗口** | 天气、未来几日预报、日历与自定义图文模块按时段轮换 |
+| **六色渲染** | 1200 × 1600 图片适配、E Ink Spectra 6 色板量化、抖动与真机校准 |
+| **长续航设备** | ESP32-S3 WiFi 拉取内容，显示后深度休眠，按钮唤醒刷新 |
+| **远程维护** | 双 OTA 分区、SHA-256 校验、失败回滚 |
+| **私人照片库** | 群晖 NAS 通过 `rsync over SSH` 增量同步，掉线时不影响本地使用 |
+
+## 内容会这样流动
+
+默认可以把一天分成三个时段：
+
+```text
+00:00 – 10:00   天气 + 日历
+10:00 – 21:00   每日照片 / 历史上的今天
+21:00 – 24:00   自由模块：LLM 文案 + 插画 + 屏幕叠字
+```
+
+自由模块不是写死的新闻页面，而是可配置的内容生成器。例如：宝宝背单词、读诗、历史故事、李白的诗和酒、睡前童话……每天生成一次，生成结果直接适配电子纸的六色显示。
+
+## 界面预览
+
+<p align="center">
+  <img src="docs/design-preview/0_current.png" alt="经典天气卡片布局" width="48%">
+  <img src="docs/design-preview/blue_v4.png" alt="彩色天气卡片布局" width="48%">
+</p>
+
+<p align="center"><sub>左：简洁信息卡片 · 右：彩色主题卡片（均为软件渲染预览）</sub></p>
+
+> 预览图是渲染管线的设计稿，不代表真实照片。真实照片不会提交到公开仓库，照片目录已由 `.gitignore` 忽略，仅保留在本地/NAS。
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    A[本地照片 / 群晖 NAS] -->|rsync over SSH| B
+    B[FastAPI 服务端] --> C[AI 分析与每日精选]
+    B --> D[Pillow 图片转换]
+    C --> D
+    D -->|FPS6 / RGB 内容| E[HTTP 拉取]
+    E <--> F[ESP32-S3 固件]
+    F -->|SPI| G[7.09 寸 E Ink Spectra 6]
+    B --> H[Web 管理台 / API]
+    B --> I[OTA 固件发布]
+```
+
+### 一次内容更新的完整链路
+
+1. 用户通过 Web 管理台或 API 上传/挑选照片。
+2. 服务端按屏幕比例适配到 **1200 × 1600**，量化到 Spectra 6 六色，并进行抖动与格式封装。
+3. AI 照片分析为内容生成回忆度、美观度、类型与文案；没有 VLM 时自动降级到启发式评分。
+4. ESP32 定期请求内容清单，下载当前应显示的内容。
+5. 固件解码 FPS6 数据，通过 SPI 刷新电子纸，然后进入深度休眠。
+6. 下次唤醒时只有内容发生变化才刷新，避免无意义的屏幕刷新与耗电。
 
 ## 硬件
 
 | 部件 | 型号 | 说明 |
 | --- | --- | --- |
-| 电子纸模组 | GDEB0709E01 | 7.09 寸，E Ink Spectra 6（6 色），1200x1600，SPI 接口 |
-| 主控 | ESP32-S3 开发板 | 配套开发板，16MB flash（双 OTA 分区），ESP-IDF v6.0.2 开发 |
-| 电源 | 3.3V | 电子纸刷新瞬态电流较大，供电需留余量 |
+| 彩色电子纸 | GDEB0709E01 | 7.09 寸、E Ink Spectra 6、1200 × 1600、SPI |
+| 主控 | ESP32-S3 开发板 | 16 MB Flash，双 OTA 分区 |
+| 电源 | 3.3 V | 电子纸刷新瞬态电流较大，供电需要留足余量 |
 
-详细规格与引脚映射见 [docs/hardware/gdeb0709e01.md](docs/hardware/gdeb0709e01.md)。
-
-## 仓库结构
-
-```
-FramedPhoto/
-├── firmware/          # ESP-IDF 固件（ESP32）
-│   ├── main/          #   应用层：WiFi / 内容拉取 / 显示任务
-│   └── components/    #   组件：gdey_epd 电子纸驱动
-├── services/          # FastAPI 服务端
-│   └── app/           #   图片转换 / 设备管理 / 内容推送 / OTA
-├── docs/              # 硬件资料、架构、路线图
-├── tools/             # 辅助脚本（图片转换 CLI、烧录脚本等）
-└── scripts/           # 开发便利脚本
-```
+硬件规格、引脚映射和官方资料归档见 [`docs/hardware/gdeb0709e01.md`](docs/hardware/gdeb0709e01.md)。
 
 ## 快速开始
 
-### 固件（ESP-IDF v6.0.x）
+### 环境要求
 
-```bash
-cd firmware
-source $IDF_PATH/export.sh        # 或 ~/esp/esp-idf/export.sh
-idf.py set-target esp32s3         # 配套板目标芯片为 ESP32-S3
-idf.py menuconfig                 # 配置 WiFi SSID / 密码 / 服务端地址 / 休眠周期
-idf.py build flash monitor
-```
+- Python 3.12+
+- ESP-IDF 6.0.x（仅编译固件时需要）
+- 一块 ESP32-S3 开发板与 GDEB0709E01 模组
+- 可选：VLM、天气服务、图像生成服务、群晖 NAS
 
-### 服务端（Python 3.12）
+### 1. 启动服务端
 
 ```bash
 cd services
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env              # 按需修改（VLM / NAS / 端口）
-uvicorn app.main:app --reload
+
+cp .env.example .env
+# 按需编辑 .env；没有 AI key 也可以先运行，照片分析会降级为启发式评分
+
+uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
-生产部署（macOS launchd 开机自启 + 内网访问）：`./scripts/install_service.sh install`，详见 [docs/development.md](docs/development.md)。
+启动后可以访问：
 
-## 当前状态
+- Web 管理台：<http://127.0.0.1:8010>
+- API 文档：<http://127.0.0.1:8010/docs>
 
-- [x] 仓库骨架与环境
-- [x] 官方资料下载归档（规格书 / 设计须知 / ESP32 示例源码，见 `docs/vendor/`）
-- [x] **M1 驱动移植**（双 IC 命令序列 → `gdey_epd`，ESP32-S3，编译通过）
-- [x] **M2 联网取图**（内容清单 + FPS6 下载 + 流式渲染，模拟器验证）
-- [x] **M3 服务端**（SQLite、设备管理、Web 管理台、OTA，45 单测全绿）
-- [x] **M4 AI 回忆相框**：AI 照片评分（gpt-5.6-luna via Responses API）、历史上的今天每日精选、文案渲染、设备深度休眠
-- [x] **自由模块**：新闻版块升级为可配置的图文模块——一段 prompt 每天生成不同内容（宝宝背单词 / 读诗 / 历史故事 / 李白的诗和酒 / 童话故事…），LLM 定当日内容 + 即梦配插画 + 屏幕叠加文字，可多模块每日轮换
-- [x] **调色板 v2 + 真机校准工具链**：OKLab 感知距离量化、双色模型（量化目标色 / 设备观感色分离）、校准图直推通道与拍照采样器（见 `docs/calibration.md`）
-- [x] **群晖 NAS 数据源**：rsync over SSH 增量同步 + 掉线容错（见 `docs/nas.md`）
-- [ ] **NAS 首轮同步 + 全量 AI 分析**（1200+ 张，`tools/analyze_photos.py`）
-- [ ] **真机验证**（烧录：棋盘格 → WiFi → 服务端图片 → 每日精选 → 深度休眠；硬件到手后）
-- [x] **设备端 OTA 客户端**（esp_ota 分区切换 + sha256 校验 + 失败回滚）
+最小配置只需要启动服务端即可。AI、天气、NAS 和自由模块都可以在后续按需开启，配置项和示例见 [`services/.env.example`](services/.env.example)。
 
-AI 能力见 [docs/ai-features.md](docs/ai-features.md)，NAS 接入见 [docs/nas.md](docs/nas.md)，API 见 [docs/api.md](docs/api.md)。
+### 2. 编译并烧录固件
 
-> 服务端当前以 launchd 服务运行在 `http://chenMac-mini.local:8010`（端口 8000 被其他服务占用）。
-> 固件通过 mDNS 解析 `.local` 主机名连接服务端，电脑 IP 变化（DHCP 重分配）时无需改任何配置；
-> 查本机 mDNS 名：`scutil --get LocalHostName`。若换电脑/改名，在 `idf.py menuconfig` 里更新
-> `FramedPhoto Application → Service base URL` 后重新烧录即可。
+```bash
+cd firmware
+source "$IDF_PATH/export.sh"
 
-路线图见 [docs/roadmap.md](docs/roadmap.md)，架构设计见 [docs/architecture.md](docs/architecture.md)。
+idf.py set-target esp32s3
+idf.py menuconfig   # 配置 WiFi、服务端地址、休眠周期等
+idf.py build
+idf.py flash monitor
+```
+
+设备端默认通过 mDNS 访问服务端。macOS 上可用下面的命令查看本机名称：
+
+```bash
+scutil --get LocalHostName
+```
+
+如果换了电脑或修改了服务端地址，在 `idf.py menuconfig` 的 `FramedPhoto Application → Service base URL` 中更新后重新烧录即可。
+
+### 3. macOS 开机自启（可选）
+
+```bash
+./scripts/install_service.sh install
+```
+
+生产部署、日志、launchd 和内网访问说明见 [`docs/development.md`](docs/development.md)。
+
+## 项目结构
+
+```text
+FramedPhoto/
+├── firmware/                  # ESP-IDF 固件：WiFi、HTTP、调度、显示与 OTA
+│   ├── main/                  # 应用层
+│   └── components/gdey_epd/   # GDEB0709E01 电子纸驱动
+├── services/                  # FastAPI 服务端与单元测试
+│   └── app/                   # 图片转换、设备管理、内容、OTA、Web UI
+├── docs/                      # 架构、硬件、API、AI、NAS、校准与路线图
+│   └── design-preview/        # 屏幕 UI 渲染预览
+├── tools/                     # 图片分析、调色板比较、校准与模拟工具
+└── scripts/                   # 烧录、NAS 同步、服务部署脚本
+```
+
+## 进度
+
+### 已完成
+
+- [x] ESP32-S3 + GDEB0709E01 驱动移植与双 IC 命令序列
+- [x] WiFi 联网、内容清单、FPS6 下载与流式渲染
+- [x] FastAPI 服务端、SQLite、设备管理、Web 管理台与 OTA
+- [x] AI 照片评分、历史上的今天、回忆文案与启发式降级
+- [x] 可配置自由模块：LLM 内容 + 插画 + 电子纸文字叠加
+- [x] Spectra 6 调色板 v2、OKLab 感知距离量化与真机校准工具链
+- [x] 群晖 NAS `rsync over SSH` 增量同步与掉线容错
+- [x] 双 OTA 分区、SHA-256 校验与失败回滚
+
+### 进行中
+
+- [ ] NAS 首轮同步与全量 AI 分析（`tools/analyze_photos.py`）
+- [ ] 完整真机验证：棋盘格 → WiFi → 服务端图片 → 每日精选 → 深度休眠
+
+## 文档导航
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/architecture.md`](docs/architecture.md) | 系统架构、数据流与模块边界 |
+| [`docs/hardware/gdeb0709e01.md`](docs/hardware/gdeb0709e01.md) | 屏幕规格、引脚映射与硬件资料 |
+| [`docs/api.md`](docs/api.md) | 服务端 API 与设备通信接口 |
+| [`docs/ai-features.md`](docs/ai-features.md) | AI 分析、每日精选与深度休眠 |
+| [`docs/nas.md`](docs/nas.md) | 群晖 NAS 同步与照片库配置 |
+| [`docs/calibration.md`](docs/calibration.md) | 调色板、校准图与真机采样流程 |
+| [`docs/development.md`](docs/development.md) | 本地开发、macOS 部署与服务管理 |
+| [`docs/protocol/fps6-format.md`](docs/protocol/fps6-format.md) | FPS6 文件格式说明 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 后续路线图 |
+
+## 开发工具
+
+```bash
+# 图片转换与 Spectra 6 预览
+python tools/convert_image.py --help
+
+# 扫描照片库并进行 AI/启发式分析
+python tools/analyze_photos.py /path/to/photos -j 4
+
+# 生成校准图、比较调色板
+python tools/generate_calibration_chart.py --help
+python tools/compare_palettes.py --help
+```
+
+服务端测试：
+
+```bash
+cd services
+source .venv/bin/activate
+pytest
+```
+
+## 隐私说明
+
+这是一个公开仓库，但以下内容只保留在本地，不会进入 Git：
+
+- 个人照片与 NAS 同步目录：`services/photos/`、`services/daily/`
+- 上传文件、运行时数据库、日志和缓存
+- API key、NAS 密码等环境变量：`services/.env`
+
+开始使用前请检查 `.gitignore`，不要把个人照片、设备运行数据或密钥提交到公开仓库。
 
 ## License
 
-MIT（详见 [LICENSE](LICENSE)）。固件中引用的第三方组件版权归各自作者所有。
+[MIT](LICENSE)。固件中引用的第三方组件版权归各自作者所有。
+
+如果你也在做低功耗电子纸、家庭信息屏或 AI 相框，欢迎提交 Issue / PR，一起把它做成真正每天都值得看的东西。
