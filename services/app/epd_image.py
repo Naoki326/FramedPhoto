@@ -38,7 +38,13 @@ HEADER_SIZE = 20
 
 # 校准 profile 文件：tools/calibrate_profile.py 拍照采样后写入，
 # 存在时自动覆盖 SPECTRA6_PROFILE_V2 的设备观感色（device）。
-CALIBRATED_PROFILE_PATH = Path(__file__).resolve().parent / "profiles" / "calibrated.json"
+# 可用环境变量 FRAMEDPHOTO_CALIBRATED_PROFILE 覆盖路径（测试隔离用）。
+import os as _os
+_calibrated_path_env = _os.environ.get("FRAMEDPHOTO_CALIBRATED_PROFILE", "")
+CALIBRATED_PROFILE_PATH = (
+    Path(_calibrated_path_env) if _calibrated_path_env
+    else Path(__file__).resolve().parent / "profiles" / "calibrated.json"
+)
 
 DEVICE_WIDTH = 1200
 DEVICE_HEIGHT = 1600
@@ -89,20 +95,30 @@ SPECTRA6_PROFILE_V1 = Spectra6Profile(
     distance="rgb",
 )
 
-# v2：感知量化（OKLab 距离）。device 初值为手机实拍采样（黑白为占位，
-# 待校准图拍照后由 calibrate_profile.py 覆盖为 calibrated.json）。
+# v2：校准模型。校准的本质是建立「理想色板 ↔ 屏幕真实观感」的整体映射：
+# 校准后的六色（calibrated.json 的 device 色）同时作为量化目标（targets）与
+# 预览渲染色（device）——量化在屏幕显示色空间进行，源色在真实观感色里找
+# 最近墨水（+抖动混色），因此黄色自动混合成棕黄、其他颜色统一按同一套逻辑处理，
+# 预览与真机一致。未校准时退化为理想色（与 v1 量化一致）。
 SPECTRA6_PROFILE_V2 = Spectra6Profile(
     name="v2",
-    targets=tuple(SPECTRA6_PALETTE),
-    device=(
-        (0, 0, 0),          # 0x0 黑（占位，待校准）
-        (255, 255, 255),    # 0x1 白（占位，待校准）
-        (149, 151, 50),     # 0x2 黄：手机实拍 GDEB0709E01
-        (109, 21, 17),      # 0x3 红：手机实拍
-        (33, 65, 127),      # 0x5 蓝：手机实拍
-        (86, 120, 95),      # 0x6 绿：手机实拍
+    targets=(
+        (0, 0, 0),          # 0x0 黑
+        (255, 255, 255),    # 0x1 白
+        (165, 175, 94),     # 0x2 黄（校准棕黄占位，待 calibrated.json 覆盖）
+        (109, 21, 17),      # 0x3 红（实拍占位）
+        (33, 65, 127),      # 0x5 蓝（实拍占位）
+        (86, 120, 95),      # 0x6 绿（实拍占位）
     ),
-    distance="oklab",
+    device=(
+        (0, 0, 0),          # 0x0 黑
+        (255, 255, 255),    # 0x1 白
+        (165, 175, 94),     # 0x2 黄
+        (109, 21, 17),      # 0x3 红
+        (33, 65, 127),      # 0x5 蓝
+        (86, 120, 95),      # 0x6 绿
+    ),
+    distance="rgb",
 )
 
 _PROFILES: dict[str, Spectra6Profile] = {
@@ -124,9 +140,9 @@ def _load_calibrated_profile() -> Spectra6Profile | None:
         return None
     return Spectra6Profile(
         name="v2",
-        targets=SPECTRA6_PROFILE_V2.targets,
+        targets=tuple(device),    # 校准色即量化目标（屏幕显示色空间）
         device=tuple(device),
-        distance="oklab",
+        distance="rgb",
     )
 
 
@@ -134,6 +150,38 @@ _calibrated = _load_calibrated_profile()
 if _calibrated is not None:
     _PROFILES["v2"] = _calibrated
     SPECTRA6_PROFILE_V2 = _calibrated
+
+
+def reload_calibrated_profile() -> Spectra6Profile:
+    """重新读取 calibrated.json 并热更新 v2 profile（校准照片上传后调用，
+    无需重启服务即生效）。清除后（文件不存在）恢复默认占位。"""
+    global SPECTRA6_PROFILE_V2
+    prof = _load_calibrated_profile()
+    if prof is None:
+        prof = Spectra6Profile(
+            name="v2",
+            targets=(
+                (0, 0, 0),          # 0x0 黑
+                (255, 255, 255),    # 0x1 白
+                (165, 175, 94),     # 0x2 黄
+                (109, 21, 17),      # 0x3 红
+                (33, 65, 127),      # 0x5 蓝
+                (86, 120, 95),      # 0x6 绿
+            ),
+            device=(
+                (0, 0, 0),          # 0x0 黑
+                (255, 255, 255),    # 0x1 白
+                (165, 175, 94),     # 0x2 黄
+                (109, 21, 17),      # 0x3 红
+                (33, 65, 127),      # 0x5 蓝
+                (86, 120, 95),      # 0x6 绿
+            ),
+            distance="rgb",
+        )
+    SPECTRA6_PROFILE_V2 = prof
+    _PROFILES["v2"] = prof
+    _BYTE_LOOKUP_CACHE.pop(prof.name, None)   # 清预览查表缓存
+    return prof
 
 
 def get_profile(name: str) -> Spectra6Profile:
@@ -248,8 +296,10 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
                      profile: Spectra6Profile) -> list[list[int]]:
     """6 色板 Floyd–Steinberg 抖动，返回每像素色板索引 0..5。
 
-    误差在 RGB 空间传播（与 v1 一致），颜色选择按 profile 的
-    targets + distance（"oklab" 时为感知最近）。
+    distance="rgb"：与 v1 完全一致（RGB 误差传播 + RGB 距离）。
+    distance="oklab"：误差传播与颜色选择统一在 OKLab 空间，
+    避免「RGB 误差 + OKLab 选择」两个空间不一致导致的误差补偿失效
+    （曾造成渐变区抖动错乱、大面积噪声）。
     """
     targets = profile.targets
     distance = profile.distance
@@ -257,6 +307,46 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
     err: list[list[tuple[float, float, float]]] = [[(0.0, 0.0, 0.0)] * w for _ in range(h)]
     out: list[list[int]] = [[0] * w for _ in range(h)]
 
+    if distance == "oklab":
+        # 预转换：目标色 OKLab + 逐像素缓存，误差在 OKLab 传播
+        target_labs = [_oklab_cached(t) for t in targets]
+        for y in range(h):
+            for x in range(w):
+                el, ea, eb = err[y][x]
+                lab = _oklab_cached(pixels[y][x])
+                l2 = lab[0] + el
+                a2 = lab[1] + ea
+                b2 = lab[2] + eb
+                # OKLab 最近邻
+                best, best_d = 0, float("inf")
+                for i, tl in enumerate(target_labs):
+                    d = ((l2 - tl[0]) ** 2 + (a2 - tl[1]) ** 2 + (b2 - tl[2]) ** 2)
+                    if d < best_d:
+                        best, best_d = i, d
+                out[y][x] = best
+                tl = target_labs[best]
+                ql = l2 - tl[0]
+                qa = a2 - tl[1]
+                qb = b2 - tl[2]
+                if x + 1 < w:
+                    err[y][x + 1] = (err[y][x + 1][0] + ql * 7 / 16,
+                                     err[y][x + 1][1] + qa * 7 / 16,
+                                     err[y][x + 1][2] + qb * 7 / 16)
+                if y + 1 < h:
+                    err[y + 1][x] = (err[y + 1][x][0] + ql * 5 / 16,
+                                     err[y + 1][x][1] + qa * 5 / 16,
+                                     err[y + 1][x][2] + qb * 5 / 16)
+                    if x > 0:
+                        err[y + 1][x - 1] = (err[y + 1][x - 1][0] + ql * 3 / 16,
+                                             err[y + 1][x - 1][1] + qa * 3 / 16,
+                                             err[y + 1][x - 1][2] + qb * 3 / 16)
+                    if x + 1 < w:
+                        err[y + 1][x + 1] = (err[y + 1][x + 1][0] + ql * 1 / 16,
+                                             err[y + 1][x + 1][1] + qa * 1 / 16,
+                                             err[y + 1][x + 1][2] + qb * 1 / 16)
+        return out
+
+    # rgb：历史行为，误差在 RGB 传播
     for y in range(h):
         for x in range(w):
             r, g, b = pixels[y][x]
@@ -264,7 +354,7 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
             r2 = max(0, min(255, r + er))
             g2 = max(0, min(255, g + eg))
             b2 = max(0, min(255, b + eb))
-            idx = _nearest_index((r2, g2, b2), targets, distance)
+            idx = _nearest_index((r2, g2, b2), targets, "rgb")
             out[y][x] = idx
             pr, pg, pb = targets[idx]
             qr, qg, qb = (r2 - pr), (g2 - pg), (b2 - pb)

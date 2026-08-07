@@ -49,3 +49,4 @@ services/sync_status.json
 
 # 本地私人预览素材（不入库）
 docs/design-preview/local/
+services/app/profiles/calibrated.json

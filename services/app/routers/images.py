@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app import db, daily, nas_sync
 from app.config import settings
@@ -285,6 +285,8 @@ async def get_weather_preview():
 
 DISPLAY_FILE = UPLOAD_DIR / "display.fps6"
 DISPLAY_META = UPLOAD_DIR / "display.json"
+# 原始图缩略图（量化前，供管理台「当前显示」预览，省流量）
+DISPLAY_ORIG = UPLOAD_DIR / "display.orig.jpg"
 
 
 def _display_meta() -> dict | None:
@@ -308,6 +310,7 @@ def _display_meta() -> dict | None:
         "height": h,
         "url": "/api/images/display/raw",
         "preview_url": "/api/images/display/preview",
+        "has_orig": bool(m.get("has_orig")),
     }
 
 
@@ -322,12 +325,33 @@ async def display_upload(file: UploadFile = File(...)):
     except Exception as exc:
         raise HTTPException(422, f"image conversion failed: {exc}") from exc
     DISPLAY_FILE.write_bytes(prepared.data)
+    # 保存量化前原图缩略图（管理台「当前显示」预览用，省流量）
+    _write_display_orig(raw)
     DISPLAY_META.write_text(json.dumps({
         "filename": file.filename or "",
         "landscape": 1 if is_landscape(raw) else 0,
+        "has_orig": True,
         "ts": db.now(),
     }, ensure_ascii=False), encoding="utf-8")
     return _display_meta()
+
+
+def _write_display_orig(raw: bytes) -> None:
+    """把原始图片转成缩略图保存（最长边 ~500px，JPEG 80），失败时静默。"""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(raw))
+        img = ImageOps.exif_transpose(img)
+        img.thumbnail((500, 500), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=80)
+        DISPLAY_ORIG.write_bytes(buf.getvalue())
+    except Exception:
+        try:
+            DISPLAY_ORIG.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @router.post("/display/raw-fps6")
@@ -348,9 +372,11 @@ async def display_upload_raw_fps6(file: UploadFile = File(...)):
     if len(raw) != 20 + w * h // 2:
         raise HTTPException(400, "truncated FPS6 payload")
     DISPLAY_FILE.write_bytes(raw)
+    DISPLAY_ORIG.unlink(missing_ok=True)   # 校准图直推无原图，清理旧缩略图
     DISPLAY_META.write_text(json.dumps({
         "filename": file.filename or "calibration.fps6",
         "landscape": 1,   # 校准图按横放视角设计，设备横放观看
+        "has_orig": False,
         "ts": db.now(),
     }, ensure_ascii=False), encoding="utf-8")
     return _display_meta()
@@ -374,12 +400,16 @@ async def display_raw():
 
 @router.get("/display/preview")
 async def display_preview():
+    """当前显示预览：有原图缩略图则返回原图（量化前，省流量），
+    否则（校准图直推）回退为 FPS6 数据还原渲染。"""
     if not DISPLAY_FILE.exists():
         raise HTTPException(404, "no display image")
+    meta = _display_meta()
+    if DISPLAY_ORIG.exists():
+        return Response(content=DISPLAY_ORIG.read_bytes(), media_type="image/jpeg")
     raw = DISPLAY_FILE.read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
     prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
-    meta = _display_meta()
     return Response(content=preview_png_landscape(prepared, bool(meta and meta["landscape"])),
                     media_type="image/png")
 
@@ -387,7 +417,7 @@ async def display_preview():
 @router.delete("/display/current")
 async def display_clear():
     """清除临时显示，恢复时段自动内容。"""
-    for p in (DISPLAY_FILE, DISPLAY_META):
+    for p in (DISPLAY_FILE, DISPLAY_META, DISPLAY_ORIG):
         if p.exists():
             p.unlink()
     return {"ok": True}

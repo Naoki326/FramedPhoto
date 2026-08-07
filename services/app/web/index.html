@@ -206,6 +206,104 @@
     </section>
 
     <section>
+      <h2>🖥 屏幕校准（Spectra 6 六色观感）</h2>
+      <div style="font-size:13px;line-height:2">
+        <div id="calStatus" style="margin-bottom:10px;font-size:12px;color:#6b7280">加载中…</div>
+
+        <!-- 步骤1：显示校准图 -->
+        <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px">
+          <b>步骤 1 · 在屏幕上显示校准图</b>
+          <p style="color:#6b7280;margin:4px 0 8px;font-size:12px;line-height:1.6">
+            校准图以设备 nibble <b>直写六种纯色</b>（不经转换），屏幕显示的就是墨水本身的颜色，
+            这是校准的前提。生成后请<b>按设备刷新键</b>查看（横放设备：1黑 2白 3黄 4红 5蓝 6绿）。
+          </p>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button onclick="calGen()" id="calGenBtn">生成校准图并推送设备</button>
+            <button onclick="calShowChart()" style="background:#f3f4f6;color:#374151">预览</button>
+          </div>
+        </div>
+
+        <!-- 步骤2：确定六色 -->
+        <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px">
+          <b>步骤 2 · 确定六种墨水的颜色</b>
+          <p style="color:#6b7280;margin:4px 0 8px;font-size:12px;line-height:1.6">
+            对照屏幕上的校准图，用两种方式之一确定每种墨水的真实观感颜色（任选，可混用）：
+          </p>
+          <div style="margin:8px 0;display:flex;gap:6px">
+            <button onclick="calMode('auto')" id="calModeAuto" style="background:#2563eb">📷 A · 拍照自动采样（快）</button>
+            <button onclick="calMode('manual')" id="calModeManual" style="background:#f3f4f6;color:#374151">👁 B · 人眼匹配（最准）</button>
+          </div>
+
+          <!-- A：拍照自动采样 -->
+          <div id="calAutoBox">
+            <p style="color:#6b7280;margin:0 0 6px;font-size:12px">
+              对屏幕拍照上传（正面垂直、占满画面、避免反光），自动从六条色带取色：
+            </p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              <input type="file" id="calPhoto" accept="image/*" style="flex:1;min-width:200px">
+              <button onclick="calUpload(true)">核对采样位置</button>
+              <button onclick="calUpload(false)" id="calApplyBtn" style="background:#059669">✓ 应用校准</button>
+            </div>
+            <div id="calMarkedBox" style="margin-top:8px">
+              <img id="calMarked" alt="采样位置核对" style="max-width:100%;max-height:280px;object-fit:contain;border:1px solid #e5e7eb;border-radius:8px;display:none">
+              <p id="calMarkedTip" style="font-size:12px;color:#9ca3af;margin:4px 0 0">先「核对采样位置」检查红框是否落在每条色带中央，再「应用校准」。</p>
+            </div>
+          </div>
+
+          <!-- B：人眼匹配 -->
+          <div id="calManualBox" style="display:none">
+            <p style="color:#6b7280;margin:0 0 6px;font-size:12px">
+              对照屏幕，为每种墨水点选最接近你看到的颜色；或用「照片点选」直接在照片上取色：
+            </p>
+            <div style="margin-bottom:8px">
+              <button onclick="calPickToggle()" id="calPickBtn" style="background:#f3f4f6;color:#374151">📷 照片点选取色</button>
+              <input type="file" id="calPickPhoto" accept="image/*" style="display:none">
+              <span id="calPickTarget" style="margin-left:8px;font-size:12px;color:#6b7280"></span>
+            </div>
+            <div id="calPickTargetBox" style="display:none;margin-bottom:8px;font-size:12px">
+              当前取色目标：
+              <select id="calPickSel" onchange="calPickIdx=+this.value; calPickTargetLabel()">
+                <option value="0">黑</option>
+                <option value="1">白</option>
+                <option value="2">黄</option>
+                <option value="3">红</option>
+                <option value="4">蓝</option>
+                <option value="5">绿</option>
+              </select>
+              <span style="color:#9ca3af">点照片色带直接取色填入当前目标</span>
+            </div>
+            <div id="calPickBox" style="display:none">
+              <img id="calPickImg" alt="点取色照片" style="max-width:100%;max-height:280px;object-fit:contain;border:1px solid #e5e7eb;border-radius:8px;cursor:crosshair">
+              <p style="font-size:12px;color:#9ca3af;margin:4px 0 0">点击照片上的色带即可取色到当前目标墨水（黑→白→黄→红→蓝→绿 依次）。</p>
+            </div>
+            <div id="calManualColors" style="margin-top:8px"></div>
+            <div style="margin-top:8px">
+              <button onclick="calManualSave()" id="calManualSaveBtn" style="background:#059669">✓ 保存人眼匹配结果</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 步骤3：验证效果 -->
+        <div style="padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:10px">
+          <b>步骤 3 · 验证整体效果（可选）</b>
+          <p style="color:#6b7280;margin:4px 0 8px;font-size:12px;line-height:1.6">
+            彩虹效果图走<b>正常转换链路</b>（量化+抖动），推送到设备看照片/内容在屏幕上的实际效果。
+            觉得颜色不对就回步骤 2 调整；调整后再推一次对比。
+          </p>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button onclick="calRainbowPush()" id="calRainbowBtn" style="background:#7c3aed;color:#fff">生成彩虹效果图并推送设备</button>
+            <button onclick="calShowRainbow()" style="background:#f3f4f6;color:#374151">预览</button>
+          </div>
+        </div>
+
+        <div id="calColors" style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap"></div>
+        <div style="margin-top:10px">
+          <button class="danger" onclick="calClear()" id="calClearBtn" style="display:none">清除校准（恢复默认）</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>设备</h2>
       <div style="margin-bottom:10px">
         <button onclick="openScModal()">📡 SmartConfig 配网（不断网）</button>
@@ -846,6 +944,7 @@ async function loadSettings() {
     freeModules = (s.config.free_modules || []).map(m => ({ name: m.name || '', enabled: !!m.enabled, prompt: m.prompt || '', style: m.style || '' }));
     renderFreeModules();
     $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置智谱 key，仅纯插画/文字' }）` : '';
+    loadCalibration();
   } catch (_) {}
 }
 async function saveSettings() {
@@ -866,6 +965,197 @@ async function saveSettings() {
     $('sMsg').textContent = '已保存，立即生效'; setTimeout(() => $('sMsg').textContent = '', 2500);
     loadSettings(); loadDisplay();
   } catch (e) { alert('保存失败: ' + e.message); }
+}
+
+/* ---- 屏幕校准 ---- */
+let calModeNow = 'auto';
+let calManual = [];          // 人工匹配六色 [r,g,b]
+let calPickIdx = 0;          // 照片点选当前目标墨水
+let calPickB64 = '';         // 当前点选照片 base64
+async function loadCalibration() {
+  try {
+    const s = await api('/calibration');
+    renderCalStatus(s);
+    if (!calManual.length) calManual = s.device.map(c => [...c]);
+  } catch (_) {}
+}
+function renderCalStatus(s) {
+  $('calStatus').innerHTML = s.calibrated
+    ? `✅ 已校准（${s.captured_at || '时间未知'}）· 当前生效 <b>v2</b> 调色板`
+    : `未校准 · 当前 v2 使用默认占位色（黑白未标定，四色为历史实拍采样）`;
+  $('calClearBtn').style.display = s.calibrated ? '' : 'none';
+  const box = $('calColors');
+  box.innerHTML = '';
+  const cur = s.device, def = s.defaults;
+  cur.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'text-align:center;font-size:12px';
+    const changed = c.some((v, k) => v !== def[i][k]);
+    d.innerHTML = `<div style="width:64px;height:48px;border-radius:8px;border:1px solid #e5e7eb;background:rgb(${c[0]},${c[1]},${c[2]})"></div>
+      <div style="margin-top:3px">${s.names[i]} <b>(${c.join(',')})</b>${changed ? '' : ' <span style="color:#9ca3af">占位</span>'}</div>`;
+    box.appendChild(d);
+  });
+}
+function calMode(m) {
+  calModeNow = m;
+  $('calModeAuto').style.background = m === 'auto' ? '#2563eb' : '#f3f4f6';
+  $('calModeAuto').style.color = m === 'auto' ? '#fff' : '#374151';
+  $('calModeManual').style.background = m === 'manual' ? '#2563eb' : '#f3f4f6';
+  $('calModeManual').style.color = m === 'manual' ? '#fff' : '#374151';
+  $('calAutoBox').style.display = m === 'auto' ? '' : 'none';
+  $('calManualBox').style.display = m === 'manual' ? '' : 'none';
+  if (m === 'manual') renderCalManual();
+}
+async function calGen() {
+  const btn = $('calGenBtn'); btn.disabled = true; btn.textContent = '生成中…';
+  try {
+    const r = await api('/calibration/generate', { method: 'POST' });
+    toast('校准图已生成并推送到设备，按设备刷新键查看');
+    renderCalStatus(r.status || {});
+  } catch (e) { toast('失败: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '生成校准图并推送设备'; }
+}
+async function calRainbowPush() {
+  const btn = $('calRainbowBtn'); btn.disabled = true; btn.textContent = '生成中…';
+  try {
+    const r = await api('/calibration/rainbow/push', { method: 'POST' });
+    toast('彩虹效果图已推送到设备，按设备刷新键查看');
+  } catch (e) { toast('失败: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '生成彩虹效果图并推送设备'; }
+}
+async function calShowChart() { window.open('/api/calibration/chart', '_blank'); }
+async function calShowRainbow() { window.open('/api/calibration/rainbow', '_blank'); }
+async function calUpload(markedOnly) {
+  const f = $('calPhoto').files[0];
+  if (!f) return toast('请先选择校准图照片');
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    if (markedOnly) {
+      const r = await fetch('/api/calibration/photo/marked', { method: 'POST', body: fd });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+      const blob = await r.blob();
+      const img = $('calMarked');
+      img.src = URL.createObjectURL(blob);
+      img.style.display = '';
+      $('calMarkedTip').textContent = '红色采样框应分别落在六条色带的中央区域；位置不对请重新拍摄（或换一张更正面、更占满画面的照片）。';
+      return;
+    }
+    const r = await fetch('/api/calibration/photo', { method: 'POST', body: fd });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    const j = await r.json();
+    toast('校准已应用并热加载生效');
+    renderCalStatus(j.status);
+    loadDisplay();
+  } catch (e) { toast('失败: ' + e.message); }
+}
+async function calClear() {
+  if (!confirm('清除校准并恢复默认占位色？')) return;
+  try {
+    const r = await api('/calibration', { method: 'DELETE' });
+    toast(r.removed ? '已清除校准' : '当前无校准文件');
+    renderCalStatus(r.status);
+    if (calManual.length) calManual = r.status.device.map(c => [...c]);
+    renderCalManual();
+  } catch (e) { toast('失败: ' + e.message); }
+}
+/* ---- 人眼匹配 ---- */
+/* ---- 人眼匹配（原生取色器，滑块自动对准当前值） ---- */
+function renderCalManual() {
+  const box = $('calManualColors');
+  box.innerHTML = '';
+  const NAMES = ['黑', '白', '黄', '红', '蓝', '绿'];
+  calManual.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;margin:6px 0';
+    const hx = (v) => v.toString(16).padStart(2, '0');
+    const hex = '#' + hx(c[0]) + hx(c[1]) + hx(c[2]);
+    // input type=color：原生彩虹条；value 每次渲染都设为当前色，
+    // 打开时滑块即停到当前设置的颜色（记忆），不会归零
+    row.innerHTML = `<span style="width:56px;font-weight:600">${NAMES[i]}</span>
+      <input type="color" value="${hex}" style="width:52px;height:34px;border:0;padding:0;background:none;cursor:pointer"
+        oninput="calManual[${i}]=hex2rgb(this.value); this.parentElement.querySelector('.cv').textContent=calManual[${i}].join(',')">
+      <span class="cv" style="font-size:12px;color:#6b7280">${c.join(',')}</span>
+      <span style="font-size:12px;color:#9ca3af">点击色块调色（彩虹条自动停在当前色）</span>`;
+    box.appendChild(row);
+  });
+}
+function hex2rgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function calPickTargetLabel() {
+  const n = ['黑','白','黄','红','蓝','绿'][calPickIdx];
+  const t = $('calPickTarget');
+  if (t) t.textContent = '当前目标：' + n;
+  const s = $('calPickSel');
+  if (s) s.value = String(calPickIdx);
+}
+function calPickToggle() {
+  const box = $('calPickBox');
+  if (box.style.display === 'none') {
+    $('calPickPhoto').click();
+  } else {
+    box.style.display = 'none';
+    $('calPickBtn').textContent = '📷 照片点选取色（替代手动点色块）';
+    $('calPickTargetBox').style.display = 'none';
+  }
+}
+$('calPickPhoto') && ($('calPickPhoto').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const r = await fetch('/api/calibration/photo?mode=pick', { method: 'POST', body: fd });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
+    const blob = await r.blob();
+    const rd = new FileReader();
+    rd.onload = () => { calPickB64 = rd.result.split(',')[1]; };
+    rd.readAsDataURL(blob);
+    const img = $('calPickImg');
+    img.src = URL.createObjectURL(blob);
+    img.style.display = '';
+    $('calPickBox').style.display = '';
+    $('calPickBtn').textContent = '✋ 收起照片点选';
+    $('calPickTargetBox').style.display = '';
+    calPickTargetLabel();
+    toast('点照片色带直接取色填入当前目标墨水');
+  } catch (err) { toast('失败: ' + err.message); }
+}));
+$('calPickImg') && ($('calPickImg').addEventListener('click', async (e) => {
+  if (!calPickB64) return;
+  const rect = e.target.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  try {
+    const r = await fetch('/api/calibration/pick/color', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ photo_b64: calPickB64, x, y }),
+    });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
+    const j = await r.json();
+    calManual[calPickIdx] = j.color;
+    renderCalManual();
+    calPickIdx = (calPickIdx + 1) % 6;
+    calPickTargetLabel();
+    toast('已取色 → ' + ['黑','白','黄','红','蓝','绿'][calPickIdx === 0 ? 5 : calPickIdx - 1] + '；下一个：' + ['黑','白','黄','红','蓝','绿'][calPickIdx]);
+  } catch (err) { toast('失败: ' + err.message); }
+}));
+async function calManualSave() {
+  const btn = $('calManualSaveBtn'); btn.disabled = true;
+  try {
+    const r = await fetch('/api/calibration/device', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: calManual }),
+    });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
+    const j = await r.json();
+    toast('人眼匹配校准已应用并热加载生效');
+    renderCalStatus(j.status);
+    loadDisplay();
+  } catch (e) { toast('失败: ' + e.message); }
+  finally { btn.disabled = false; }
 }
 
 /* ---- WiFi 配网（管理台推送） ---- */

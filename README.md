@@ -234,7 +234,7 @@ FramedPhoto/
 - [x] FastAPI 服务端、SQLite、设备管理、Web 管理台与 OTA
 - [x] AI 照片评分、历史上的今天、回忆文案与启发式降级
 - [x] 可配置自由模块：LLM 内容 + 插画 + 电子纸文字叠加
-- [x] Spectra 6 调色板 v2、OKLab 感知距离量化与真机校准工具链
+- [x] Spectra 6 调色板 v2、OKLab 感知距离量化与真机校准工具链（管理台「设置 → 屏幕校准」一键生成/推送校准图、上传照片采样热加载，见 `docs/calibration.md`）
 - [x] 群晖 NAS `rsync over SSH` 增量同步与掉线容错
 - [x] 双 OTA 分区、SHA-256 校验与失败回滚
 

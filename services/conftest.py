@@ -15,6 +15,8 @@ _tmp = tempfile.mkdtemp(prefix="framedphoto-pytest-")
 os.environ["DB_PATH"] = os.path.join(_tmp, "test.db")
 os.environ["UPLOAD_DIR"] = os.path.join(_tmp, "uploads")
 os.environ["OTA_DIR"] = os.path.join(_tmp, "ota")
+# 校准 profile 同样隔离，避免测试调用 save_calibrated 覆盖真实校准数据
+os.environ["FRAMEDPHOTO_CALIBRATED_PROFILE"] = os.path.join(_tmp, "calibrated.json")
 
 
 @pytest.fixture(autouse=True)

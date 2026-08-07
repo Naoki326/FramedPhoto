@@ -32,7 +32,26 @@ Spectra6Profile(name, targets, device, distance)
 profile 只在「量化/预览」层生效，FPS6 数据区仍是设备 nibble，**固件无需改动、
 已上线设备无需升级**。`PALETTE_VERSION` 字段不变。
 
-## 校准流程（一次性，约 10 分钟）
+## 校准流程（管理台网页版，约 5 分钟）
+
+打开管理台（`http://chenMac-mini.local:8010/`）→「设置」→「🖥 屏幕校准」，按页面三个步骤操作：
+
+**步骤 1 · 在屏幕上显示校准图**
+1. 点「生成校准图并推送设备」（自动生成 FPS6 并直推 display 通道，绕过量化）；
+2. 按设备刷新键，屏幕显示校准图（1 黑 / 2 白 / 3 黄 / 4 红 / 5 蓝 / 6 绿），横放设备观看。
+
+**步骤 2 · 确定六种墨水的颜色**（任选一种方式，可混用）
+- 📷 A · 拍照自动采样：对屏幕正面拍照上传 →「核对采样位置」检查红框 →「✓ 应用校准」；
+- 👁 B · 人眼匹配：对照屏幕逐色点选（原生调色板），或用「照片点选取色」直接在照片上取色 →「✓ 保存」；
+- 结果写入 `services/app/profiles/calibrated.json` 并**热加载**，无需重启服务。
+
+**步骤 3 · 验证整体效果（可选）**
+- 点「生成彩虹效果图并推送设备」：彩虹图走正常转换链路（量化+抖动），看照片/内容在屏幕上的实际效果；
+- 觉得颜色不对就回步骤 2 调整，调整后再推一次对比。
+
+> 两种图的分工：**校准图**（步骤 1）是直写六色、用于确定墨水颜色；**彩虹效果图**（步骤 3）是正常转换、用于验证整体效果。
+
+## 校准流程（命令行版）
 
 ```bash
 # 1. 生成校准图（1600x1200 横放视角，nibble 直写六色）
@@ -52,12 +71,8 @@ curl -X POST http://chenMac-mini.local:8010/api/images/display/raw-fps6 \
 python3 tools/calibrate_profile.py photo.jpg --preview marked.png
 #    如果照片里校准图是竖着拍的，加 --rotate 90/180/270
 
-# 6. 检查标注图红框是否落在每条色带中央，确认后生成的 calibrated.json
-#    已写入 services/app/profiles/，v2 自动生效（无需重启？见下）
+# 6. calibrated.json 已写入 services/app/profiles/，v2 热加载生效（无需重启）
 ```
-
-> `calibrated.json` 在 `epd_image.py` **模块导入时**加载。写入后需重启服务端
-> （`launchctl kickstart -k gui/$(id -u)/com.framedphoto.service`）或重启 uvicorn。
 
 拍摄要点：
 - 正面垂直，手机与屏幕平行；侧视会让上下色带亮度不均；
