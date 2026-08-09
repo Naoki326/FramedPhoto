@@ -61,6 +61,14 @@ uvicorn app.main:app --reload
 - 管理：`./scripts/install_service.sh {install|status|restart|stop|uninstall}`
 - 访问：`http://chenMac-mini.local:8010`（管理台，mDNS 名，IP 变化不影响）；日志 `services/framedphoto.log`
 
+> ⚠️ 排查时注意：项目目录移动过（如从 `~/Documents/Works/FramedPhoto` 迁到 `~/FramedPhoto`）
+> 后，旧目录下可能残留手动启动的 uvicorn 进程（`lsof -i :端口` 可查），
+> 其指向已不存在的代码路径（页面 500），记得 `kill` 掉避免占端口/混淆访问入口。
+
+### 天气城市设置
+
+管理台「天气卡片风格」下方城市输入框：输入中文城市名（如 `上海宝山`）保存时自动解析为和风城市 ID（`/api/weather/lookup`），也支持直接填城市 ID / 经纬度 / 拼音；留空回退 IP 自动定位。天气缓存按 location 指纹，改城市后立即生效。
+
 ### NAS 照片同步（sync_nas.sh）
 
 - 增量同步在后台运行时，状态写入 `services/sync_status.json`（约每 5 秒更新一次），
@@ -82,7 +90,7 @@ python tools/convert_image.py photo.jpg -o out.fps6 --preview out.png
 - M2 联网取图（内容清单 + FPS6 下载 + 流式渲染）
 - M3 服务端（SQLite / 设备管理 / Web 管理台 / OTA）
 - M4 AI 回忆相框（照片分析评分 + 历史上的今天每日精选 + 文案渲染 + 深度休眠）
-- 服务端 **45 个单测全绿**，固件编译通过（esp32s3，约 958KB）
+- 服务端 **105+ 个单测**（107 collected）全绿，固件编译通过（esp32s3，约 958KB）
 
 **真机验证**（硬件到手后）：
 1. `idf.py menuconfig` 配置 WiFi SSID/密码和服务端 URL

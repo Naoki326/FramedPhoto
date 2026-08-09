@@ -39,12 +39,13 @@
 
 ## 当前进度（2026-08）
 
-- 服务端 45 单测全绿，固件编译通过（esp32s3，958KB）；launchd 服务运行在 :8010
-- **NAS 首次全量同步进行中**（rsync over SSH，限速 100KB/s，1846 文件 / 约 3.6GB）
+- 服务端 105+ 单测全绿，固件编译通过（esp32s3，958KB）；launchd 服务运行在 :8010
+- **NAS 首次全量同步已完成**（rsync over SSH，373 文件 / 约 3.4GB），等待全量 AI 分析
+- 天气卡四风格 + 城市自定义、管理台 24h 时序编排、屏幕校准工具链已上线
 - 硬件未到，真机联调未开始
 
 ## M5 — 打磨（真机阶段）
-- [ ] **NAS 同步完成后**：`cd services && python ../tools/analyze_photos.py ./photos -j 4` 全量 AI 分析（1200+ 张）
+- [ ] **下一步**：`cd services && python ../tools/analyze_photos.py ./photos -j 4` 全量 AI 分析（373 张）
 - [ ] 真机联调：显示 / WiFi / 深度休眠全流程
 - [x] 设备端 OTA 客户端（esp_ota 分区切换 + sha256 校验 + bootloader 回滚）
 - [ ] 断网重连 / 异常恢复

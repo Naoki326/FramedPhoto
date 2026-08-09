@@ -41,6 +41,13 @@
 | GET | `/api/devices` | 设备列表（在线状态按 last_seen 判断） |
 | POST | `/api/ota/upload` | 发布固件：multipart `file` + `version`（校验 0xE9 魔数） |
 | GET | `/api/ota/versions` | 最新固件信息 |
+| GET | `/api/settings` | 当前生效配置（时段编排 / 天气 / 自由模块）+ 状态（IP 定位城市、当前时段、今日自由模块） |
+| PUT | `/api/settings` | 保存配置（即时生效，写入 `runtime_config.json`）；天气相关设置变化会自动清理天气缓存 |
+| GET | `/api/weather/lookup?location=宝山` | 中文城市名 → 和风 location 列表（管理台城市输入框保存时自动调用） |
+
+### 天气城市设置
+
+管理台「城市」输入框保存时，中文城市名会自动解析为和风 location（城市 ID / 经纬度），也支持直接填城市 ID、经纬度或拼音。解析逻辑：前端内置常用城市表 → `/api/weather/lookup`（GeoAPI + 常见城市兜底）。保存后天气卡片按新城市渲染（缓存文件名带 location 指纹，改城市立即失效）。留空则回退 IP 自动定位。
 
 ## 数据存储
 
