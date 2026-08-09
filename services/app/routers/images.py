@@ -207,9 +207,17 @@ async def daily_unselect():
 
 @router.get("/daily/preview")
 async def get_daily_preview():
+    """每日精选预览：显示量化前原图缩略图（省流量）；原图缺失时回退 FPS6 渲染。"""
     meta = daily.ensure_daily()
     if not meta:
         raise HTTPException(404, "no daily photo")
+    path = meta.get("path")
+    if path and Path(path).exists():
+        try:
+            thumb = _make_thumbnail(Path(path).read_bytes())
+            return Response(content=thumb, media_type="image/jpeg")
+        except Exception:
+            pass
     raw = daily.DAILY_FILE.read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
     prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
@@ -252,6 +260,18 @@ async def get_news_preview():
 
 @router.get("/free/preview")
 async def get_free_preview(module: str | None = None):
+    """自由模块预览：优先返回最近保存的卡片原图缩略图（量化前，省流量）；
+    无原图时回退为重新渲染 FPS6 还原。"""
+    # 自由模块渲染时 _save_to_library 会把加文字后的完整卡片 PNG 原图
+    # 存入 uploads/{id}.orig。按 mtime 找最新一张（即当前显示内容）。
+    try:
+        up = Path(settings.upload_dir)
+        origs = sorted(up.glob("*.orig"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if origs:
+            return Response(content=_make_thumbnail(origs[0].read_bytes(), max_side=800),
+                            media_type="image/jpeg")
+    except Exception:
+        pass
     from app.free_module import render_free_fps6
     data = render_free_fps6(module_name=_free_module(module))
     if not data:
@@ -339,19 +359,23 @@ async def display_upload(file: UploadFile = File(...)):
 def _write_display_orig(raw: bytes) -> None:
     """把原始图片转成缩略图保存（最长边 ~500px，JPEG 80），失败时静默。"""
     try:
-        from PIL import Image
-        import io
-        img = Image.open(io.BytesIO(raw))
-        img = ImageOps.exif_transpose(img)
-        img.thumbnail((500, 500), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="JPEG", quality=80)
-        DISPLAY_ORIG.write_bytes(buf.getvalue())
+        DISPLAY_ORIG.write_bytes(_make_thumbnail(raw))
     except Exception:
         try:
             DISPLAY_ORIG.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _make_thumbnail(raw: bytes, max_side: int = 500, quality: int = 80) -> bytes:
+    """原始图片 -> JPEG 缩略图字节（量化前原图，省流量）。"""
+    import io
+    img = Image.open(io.BytesIO(raw))
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
 
 
 @router.post("/display/raw-fps6")

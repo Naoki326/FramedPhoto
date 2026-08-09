@@ -34,14 +34,15 @@ menu "FramedPhoto Application"
         default 30
         range 5 1440
 
-    config FRAMEDPHOTO_DEEP_SLEEP_HOURS
-        int "Deep sleep interval (hours, 0 = disabled)"
-        default 24
-        range 0 168
+    config FRAMEDPHOTO_DEEP_SLEEP_MIN
+        int "Deep sleep interval (minutes, 0 = disabled)"
+        default 30
+        range 0 1440
         help
-            显示更新完成后深度休眠的小时数（RTC 定时器唤醒）。
+            显示更新完成后深度休眠的分钟数（RTC 定时器唤醒）。
             0 表示禁用（保持轮询，适合调试）。启用后设备每次唤醒
             检查内容，无变化则不刷屏直接再睡，实现长期续航。
+            例：30 = 半小时唤醒一次，1440 = 每天一次。
 
     config FRAMEDPHOTO_BUTTON_GPIO
         int "Refresh button GPIO (-1 = disabled)"

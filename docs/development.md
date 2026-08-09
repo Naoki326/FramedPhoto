@@ -88,4 +88,4 @@ python tools/convert_image.py photo.jpg -o out.fps6 --preview out.png
 1. `idf.py menuconfig` 配置 WiFi SSID/密码和服务端 URL
 2. 烧录 `./scripts/flash.sh`
 3. 无网显示棋盘格；联网后拉取服务端内容（手动上传或每日精选）
-4. 显示后按 `FRAMEDPHOTO_DEEP_SLEEP_HOURS` 深度休眠，RTC 定时唤醒
+4. 显示后按 `FRAMEDPHOTO_DEEP_SLEEP_MIN` 深度休眠，RTC 定时唤醒

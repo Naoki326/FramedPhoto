@@ -285,7 +285,7 @@ static esp_err_t update_from_server(bool force)
  * 内容未变则不再刷屏（按钮唤醒除外——用户主动按 = 想看新内容，强制刷）。 */
 static void maybe_deep_sleep(void)
 {
-    if (CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS <= 0) {
+    if (CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN <= 0) {
         return;
     }
     if (BTN_ENABLED) {
@@ -295,9 +295,9 @@ static void maybe_deep_sleep(void)
         ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
             1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO, mode));
     }
-    ESP_LOGI(TAG, "deep sleep %d h", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS);
+    ESP_LOGI(TAG, "deep sleep %d min", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN);
     esp_sleep_enable_timer_wakeup(
-        (uint64_t)CONFIG_FRAMEDPHOTO_DEEP_SLEEP_HOURS * 3600ULL * 1000000ULL);
+        (uint64_t)CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL);
     esp_deep_sleep_start();
 }
 

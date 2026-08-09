@@ -71,8 +71,8 @@ python tools/analyze_photos.py /path/to/photos [-j 4]
 
 ## 5. 设备端行为
 
-- 每次显示后**深度休眠**（`idf.py menuconfig` → `FRAMEDPHOTO_DEEP_SLEEP_HOURS`，
-  默认 24h，0 = 禁用调试）
+- 每次显示后**深度休眠**（`idf.py menuconfig` → `FRAMEDPHOTO_DEEP_SLEEP_MIN`，
+  默认 30min，0 = 禁用调试）
 - RTC 定时器唤醒 → 检查内容 → 无变化不刷屏直接再睡（上次内容存 NVS）
 - **刷新按钮**：按下立即拉取并刷新（`FRAMEDPHOTO_BUTTON_GPIO`，默认 GPIO 0 =
   板上 BOOT 键，零接线）。深度休眠中按下走 EXT1 唤醒，强制刷新一次；
