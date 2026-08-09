@@ -89,7 +89,11 @@ def resolve_location() -> tuple[str, str]:
     from app.runtime_config import effective
     loc_id = effective("qweather_location", settings) or ""
     city = effective("qweather_city", settings) or ""
-    if not loc_id or loc_id == "101010100":
+    # 用户显式设置过城市（qweather_city 或 location），就尊重它；
+    # 完全没设过（location 还是默认北京 ID 且 city 为空）才走 IP 自动定位。
+    if not loc_id:
+        if city:
+            return loc_id, city   # 有城市名没 location → 返回空 loc，让调用方按城市名查
         ip = ip_location()
         if ip and ip.get("lon") is not None:
             return f"{ip['lon']},{ip['lat']}", ip.get("city", "") or city
@@ -650,10 +654,12 @@ def render_weather_card() -> bytes | None:
     卡片按“相框横放”的视角排版（1600x1200），prepare_image 会把横图旋转
     90° 转成 FPS6 竖屏数据——横放相框观看时卡片正立。
     每日 0 点后自动切换风格（缓存文件名含日期+风格）。
+    缓存指纹带 location：管理台改了城市后，缓存自动失效立即按新城市渲染。
     """
     today = dt.date.today()
     style = pick_style(today)
-    cache = CACHE_DIR / f"weather_{today:%Y%m%d}_{style}.fps6"
+    loc_id, _city = resolve_location()
+    cache = CACHE_DIR / f"weather_{today:%Y%m%d}_{style}_{hashlib.md5(loc_id.encode()).hexdigest()[:6]}.fps6"
     if cache.exists() and (dt.datetime.now().timestamp() - cache.stat().st_mtime) < 3600:
         return cache.read_bytes()
 

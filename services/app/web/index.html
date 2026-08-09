@@ -198,8 +198,12 @@
             <label style="font-size:13px"><input type="checkbox" id="sFreeRotate"> 每日轮换模块</label>
           </div>
         </div>
-        <div>🌆 城市：<input type="text" id="sCity" placeholder="留空 = 自动 IP 定位" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
-          <span id="sIpCity" style="color:#9ca3af"></span></div>
+        <div>🌆 城市：<input type="text" id="sCity" placeholder="如：上海宝山 / 宝山 / 北京市" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
+          <span id="sCityTip" style="font-size:12px;color:#9ca3af"></span></div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.8">
+          支持直接输入中文城市名（<b>会自动查和风城市库</b>）或填城市 ID（如 <code>101020300</code>）。
+          <span id="sIpCity" style="color:#9ca3af"></span>
+        </div>
         <div style="margin-top:10px"><button onclick="saveSettings()">保存设置（即时生效）</button>
           <span id="sMsg" style="color:#16a34a;font-size:12px;margin-left:10px"></span></div>
       </div>
@@ -941,6 +945,11 @@ async function loadSettings() {
     $('sWeatherNote').textContent = s.status.weather_ready ? '' : '（未配置和风天气 key，天气时段将回退显示照片）';
     $('sCity').value = s.config.qweather_city || '';
     $('sIpCity').textContent = s.status.ip_city ? `IP 定位：${s.status.ip_city}` : '';
+    $('sCityTip').textContent = s.config.qweather_location
+      ? `已定位：${s.config.qweather_location}（${s.config.qweather_city || '默认城市'}）`
+      : (s.config.qweather_city
+        ? '已保存城市名（未解析到 ID，天气将按名称查询）'
+        : '留空 = 自动 IP 定位；输入城市名或 ID 后保存即按该城市取天气');
     freeModules = (s.config.free_modules || []).map(m => ({ name: m.name || '', enabled: !!m.enabled, prompt: m.prompt || '', style: m.style || '' }));
     renderFreeModules();
     $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置智谱 key，仅纯插画/文字' }）` : '';
@@ -949,6 +958,17 @@ async function loadSettings() {
 }
 async function saveSettings() {
   try {
+    const city = $('sCity').value.trim();
+    let qweather_location = null;
+    if (city) {
+      if (/^\d{1,3}\.\d{1,3},\d{1,3}\.\d{1,3}$/.test(city) || /^\d{3,9}$/.test(city) || /^[A-Za-z]{2,10}$/.test(city)) {
+        // 已是经纬度 / 城市 ID / 拼音，直接用作 location
+        qweather_location = city;
+      } else {
+        // 中文城市名 → 和风城市库自动解析（resolveCityToLocation，失败会抛错提示）
+        qweather_location = await resolveCityToLocation(city);
+      }
+    }
     const r = await api('/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -957,7 +977,8 @@ async function saveSettings() {
           ...(s.module ? { module: s.module } : {}) })),
         free_rotate: $('sFreeRotate').checked,
         free_modules: freeModules.filter(m => m.name.trim()),
-        qweather_city: $('sCity').value.trim(),
+        qweather_city: city,
+        qweather_location,
         weather_style: $('sStyle').value,
       }),
     });
@@ -965,6 +986,32 @@ async function saveSettings() {
     $('sMsg').textContent = '已保存，立即生效'; setTimeout(() => $('sMsg').textContent = '', 2500);
     loadSettings(); loadDisplay();
   } catch (e) { alert('保存失败: ' + e.message); }
+}
+
+/* ---- 天气城市解析 ---- */
+const CITY_ID_MAP = {
+  '北京': '101010100', '北京市': '101010100', '朝阳': '101010300', '海淀': '101010200',
+  '上海': '101020100', '上海市': '101020100', '宝山': '101020300', '上海宝山': '101020300', '嘉定': '101020900', '浦东': '101020600', '松江': '101020700', '青浦': '101020800',
+  '广州': '101280101', '广州市': '101280101', '深圳': '101280601', '深圳市': '101280601',
+  '杭州': '101210101', '杭州市': '101210101', '南京': '101190101', '南京市': '101190101',
+  '苏州': '101190401', '苏州市': '101190401', '成都': '101270101', '成都市': '101270101',
+  '重庆': '101040100', '重庆市': '101040100', '武汉': '101200101', '武汉市': '101200101',
+  '西安': '101110101', '西安市': '101110101', '天津': '101030100', '天津市': '101030100',
+};
+
+async function resolveCityToLocation(name) {
+  if (CITY_ID_MAP[name]) return CITY_ID_MAP[name];
+  const res = await fetch(`/api/weather/lookup?location=${encodeURIComponent(name)}`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.detail || `城市“${name}”未找到`);
+  }
+  const j = await res.json();
+  if (!j.location || !j.location.length) throw new Error(`城市“${name}”未找到，可改用城市 ID（如 101020300）`);
+  const best = j.location[0];
+  const adm1 = best.adm1 || '';
+  const cityLabel = `${adm1}·${best.name}`.replace(/^·/, '');
+  return { location: best.id, city: cityLabel };
 }
 
 /* ---- 屏幕校准 ---- */

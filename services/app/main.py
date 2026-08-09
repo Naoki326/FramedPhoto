@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from app.config import settings
 from app.routers import analysis, calibration, devices, images, ota, sync
 from app.routers import settings as settings_router
+from app.weather_lookup import router as weather_lookup_router
 
 # ── 应用日志落盘（services/framedphoto.log，与 launchd 日志一致）──
 # uvicorn 默认只配置自身 logger；这里显式配置 root，让 app.* 的
@@ -43,6 +44,7 @@ app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(ota.router, prefix="/api/ota", tags=["ota"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
+app.include_router(weather_lookup_router, prefix="/api/weather", tags=["weather"])
 app.include_router(calibration.router, prefix="/api/calibration", tags=["calibration"])
 app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 

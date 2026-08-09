@@ -5,6 +5,8 @@
 """
 from typing import Any
 
+import re
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -28,6 +30,20 @@ class SettingsBody(BaseModel):
     qweather_city: str | None = None
     qweather_location: str | None = None
     weather_style: str | None = Field(default=None, pattern=r"^(auto|apple|blue|magazine|classic)$")
+
+
+_QWEATHER_LOC_PATTERN = re.compile(
+    r"^(?:\d{1,3}\.\d{1,3},\d{1,3}\.\d{1,3}|\d{3,9}|[A-Za-z]{2,10})$|^\d{6}$"
+)
+
+
+def _validate_location(loc: str) -> None:
+    """校验和风 location：经纬度 / 城市ID / 拼音（见 _QWEATHER_LOC_PATTERN）。非法则 400。"""
+    if not _QWEATHER_LOC_PATTERN.match(loc.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="和风 location 需为经纬度(如 121.49,31.40)、城市ID(如 101020300)或拼音(如 shanghai)",
+        )
 
 
 @router.get("")
@@ -71,9 +87,25 @@ def _today_style() -> str:
     return f"{s} · {STYLE_LABELS.get(s, s)}"
 
 
+def _clear_weather_cache():
+    """删除天气卡片缓存（数据 + 当日设计），强制下次渲染重新拉取。"""
+    from app import weather_card
+    for f in weather_card.CACHE_DIR.glob("weather_*.fps6"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    for f in weather_card.CACHE_DIR.glob("design_*.json"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
 @router.put("")
-async def save_settings(body: SettingsBody):
+def save_settings(body: SettingsBody):
     patch: dict[str, Any] = {}
+    changed_weather = False
     for k, v in body.model_dump().items():
         if v is None:
             continue
@@ -82,7 +114,17 @@ async def save_settings(body: SettingsBody):
                 patch[k] = slots.canonicalize(v)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+        elif k == "qweather_location":
+            _validate_location(v)
+            patch[k] = v.strip()
+            changed_weather = True
+        elif k == "qweather_city":
+            patch[k] = v.strip()
+            changed_weather = True
         else:
             patch[k] = v
     saved = runtime_config.save(patch)
+    # 天气相关设置变化 → 清缓存，让天气时段立即用新位置渲染
+    if changed_weather:
+        _clear_weather_cache()
     return {"ok": True, "saved": {k: saved[k] for k in patch if k in saved}}
