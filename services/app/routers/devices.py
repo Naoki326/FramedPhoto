@@ -58,6 +58,8 @@ class WifiConfigBody(BaseModel):
 
 @router.post("/{device_id}/heartbeat")
 async def heartbeat(device_id: str, body: HeartbeatBody):
+    logger.info("heartbeat from %s: version=%s uptime=%ss img=%s", device_id,
+                body.firmware_version, body.uptime_s, body.current_image)
     if not db.get_device(device_id):
         db.upsert_device(device_id)
     db.upsert_device(

@@ -75,7 +75,7 @@ static void button_init(void)
         return;
     }
     gpio_config_t cfg = {
-        .pin_bit_mask = 1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO,
+        .pin_bit_mask = BTN_ENABLED ? (1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO) : 0,
         .mode = GPIO_MODE_INPUT,
 #if CONFIG_FRAMEDPHOTO_BUTTON_ACTIVE_LOW
         .pull_up_en = GPIO_PULLUP_ENABLE,   /* 按下接地 = 低，默认高 */
@@ -293,7 +293,7 @@ static void maybe_deep_sleep(void)
                                                 ? ESP_EXT1_WAKEUP_ANY_LOW
                                                 : ESP_EXT1_WAKEUP_ANY_HIGH;
         ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
-            1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO, mode));
+            BTN_ENABLED ? (1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO) : 0, mode));
     }
     ESP_LOGI(TAG, "deep sleep %d min", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN);
     esp_sleep_enable_timer_wakeup(
