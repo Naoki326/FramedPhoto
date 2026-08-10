@@ -65,6 +65,29 @@ def test_pick_module_first_when_no_rotate(monkeypatch):
     assert len(names) == 1  # 固定第一个启用模块
 
 
+def test_pick_module_fixed_disabled_module(monkeypatch):
+    """时段固定配置的模块即使「未启用」也能选中（enabled 只影响轮换抽奖池）。"""
+    mods = fm.default_modules()
+    mods[1]["enabled"] = False            # 「读诗」取消启用
+    monkeypatch.setattr(fm, "load_modules", lambda: mods)
+    picked = fm.pick_module(dt.date(2026, 8, 10), module_name="读诗")
+    assert picked is not None and picked["name"] == "读诗"
+
+
+def test_pick_module_fixed_missing_falls_back_to_rotate(monkeypatch):
+    """固定配置的模块不存在（如被删除）→ 回退轮换启用模块，且只轮换启用的。"""
+    mods = fm.default_modules()
+    mods[0]["enabled"] = False            # 第一个模块取消启用
+    monkeypatch.setattr(fm, "load_modules", lambda: mods)
+    monkeypatch.setattr(fm, "free_rotate", lambda: True)
+    for d in range(1, 30):
+        m = fm.pick_module(dt.date(2026, 8, d), module_name="不存在的模块")
+        assert m is not None and m["enabled"] is True
+    # 固定模块不受轮换限制：每天都能选中禁用模块
+    fixed = fm.pick_module(dt.date(2026, 8, 10), module_name=mods[0]["name"])
+    assert fixed is not None and fixed["name"] == mods[0]["name"] and fixed["enabled"] is False
+
+
 def test_render_text_card_png():
     module = {"name": "宝宝背单词", "enabled": True, "prompt": "x", "style": "y"}
     data = fm._render_text_card(module, "apple", "苹果\nI eat an apple.")

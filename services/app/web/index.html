@@ -857,7 +857,7 @@ function tlOpenMenu(i, ev) {
       <div style="padding:3px 9px 6px;font-size:11px;color:#374151">📌 固定到模块（留空 = 每日轮换）</div>
       <select class="tl-mod-sel" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
         <option value="">随机轮换（每日换一个模块）</option>
-        ${freeModules.filter(x => x.enabled).map(x => `<option value="${escHtml(x.name)}">${escHtml(x.name)}</option>`).join('')}
+        ${freeModules.map(x => `<option value="${escHtml(x.name)}">${escHtml(x.name)}${x.enabled ? '' : '（未启用）'}</option>`).join('')}
       </select>` : ''}
     ${tlSegs.length > 1 ? `<div class="sep"></div><button class="tmi del" data-del="1">🗑 删除此段（并入相邻时段）</button>` : ''}`;
   m.addEventListener('pointerdown', ev => ev.stopPropagation());

@@ -131,17 +131,18 @@ def free_rotate() -> bool:
 def pick_module(today: dt.date | None = None, module_name: str | None = None) -> dict | None:
     """当天模块。
 
-    module_name 指定时固定返回该模块（不存在/已禁用则回退轮换）；
+    module_name 指定时固定返回该模块（时段块固定配置；不受「启用」开关影响，
+    已禁用也可在时段中固定选用；不存在才回退轮换）；
     否则每天轮换启用中的模块（同一天稳定）；free_rotate=false 固定第一个。
     """
+    today = today or dt.date.today()
+    if module_name:
+        for m in load_modules():
+            if m["name"] == module_name:
+                return m
     mods = enabled_modules()
     if not mods:
         return None
-    today = today or dt.date.today()
-    if module_name:
-        for m in mods:
-            if m["name"] == module_name:
-                return m
     if free_rotate() and len(mods) > 1:
         return mods[today.toordinal() % len(mods)]
     return mods[0]

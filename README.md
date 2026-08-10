@@ -95,6 +95,7 @@ LLM 失败时降级为模块标题或纯文字卡片；文生图失败时仍可�
 - 双击任意位置切开一个时间块；
 - 点击时间块切换为“天气 / 每日照片 / 自由模块”；
 - 为自由模块时段固定指定某个主题，或启用每日轮换；
+- “启用”开关只决定每日轮换的抽奖池，未启用的模块仍可在时段中固定选用；
 - 支持跨午夜时段，同一模块跨 0 点继续复用同一张卡片。
 
 <p align="center">
@@ -156,11 +157,11 @@ flowchart LR
 
 | 部件 | 型号 | 说明 |
 | --- | --- | --- |
-| 彩色电子纸 | GDEB0709E01 | 7.09 寸、E Ink Spectra 6、1200 × 1600、SPI |
+| 彩色电子纸 | [GDEB0709E01](https://www.good-display.cn/product/729.html) | 7.09 寸、E Ink Spectra 6、1200 × 1600、SPI |
 | 主控 | ESP32-S3 开发板 | 16 MB Flash，双 OTA 分区 |
 | 电源 | 3.3 V | 电子纸刷新瞬态电流较大，供电需要留足余量 |
 
-硬件规格、引脚映射和官方资料归档见 [`docs/hardware/gdeb0709e01.md`](docs/hardware/gdeb0709e01.md)。
+硬件规格、引脚映射和官方资料归档见 [`docs/hardware/gdeb0709e01.md`](docs/hardware/gdeb0709e01.md)。屏幕官方产品页见 [GDEB0709E01（Good Display 中文官网）](https://www.good-display.cn/product/729.html)。
 
 ## 快速开始
 
