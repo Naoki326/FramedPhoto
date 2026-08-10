@@ -45,7 +45,13 @@ static char s_last_id[64] = "";
 static bool s_shown_any = false;
 static const esp_partition_t *s_storage;  /* storage 裸分区：存最新 FPS6 图 */
 
-/* ---------------- 刷新按钮（M4+：上传后按一下立即刷新） ---------------- */
+/* ---------------- 刷新按钮（上传后立即刷新） ----------------
+ *
+ * 真机教训：休眠/待机时按钮 GPIO 仅靠内部上拉（≈45kΩ）易受干扰误触发
+ * 刷新，当前默认 -1 禁用。若重新启用，硬件必须外接 10kΩ 上拉电阻
+ * （低有效接法，接 VCC）并视需要并联 100nF 滤波电容，见
+ * docs/hardware/gdeb0709e01.md「刷新按钮」章节。
+ */
 
 #define BTN_GPIO_NUM ((gpio_num_t)CONFIG_FRAMEDPHOTO_BUTTON_GPIO)
 #define BTN_ENABLED  (CONFIG_FRAMEDPHOTO_BUTTON_GPIO >= 0)

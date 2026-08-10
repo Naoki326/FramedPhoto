@@ -46,11 +46,14 @@ menu "FramedPhoto Application"
 
     config FRAMEDPHOTO_BUTTON_GPIO
         int "Refresh button GPIO (-1 = disabled)"
-        default 12
+        default -1
         range -1 21
         help
             按下立即拉取并刷新内容的按键。配套板只有三个按键：
-            IO12 / IO13 / IO14（无 BOOT/RST 键），默认 IO12。
+            IO12 / IO13 / IO14（无 BOOT/RST 键）。
+            默认 -1 禁用：仅靠内部上拉（≈45kΩ）休眠时易受干扰误触发刷新，
+            若启用必须在硬件上外接 10kΩ 上拉电阻（低有效接法）并视需要
+            并联 100nF 滤波电容（见 docs/hardware/gdeb0709e01.md）。
             仅 0-21（RTC GPIO）支持深度休眠 EXT1 唤醒；-1 禁用。
 
     config FRAMEDPHOTO_BUTTON_ACTIVE_LOW

@@ -249,10 +249,6 @@ FramedPhoto/
 - [x] 群晖 NAS `rsync over SSH` 增量同步与掉线容错（管理台「立即同步 NAS」手动触发，`launchd` 定时同步，内容库单图可推送 NAS 并自动转入照片库）
 - [x] 双 OTA 分区、SHA-256 校验与失败回滚
 
-### 进行中
-
-- [ ] docker-compose 一键部署
-
 ## 文档导航
 
 | 文档 | 内容 |

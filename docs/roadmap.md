@@ -48,7 +48,6 @@
 - [x] 全量 AI 照片分析（392 张，`photo_scores` 全部入库）
 - [x] 真机联调：显示 / WiFi / 深度休眠全流程（设备在线轮询中，断网重连已验证）
 - [x] 设备端 OTA 客户端（esp_ota 分区切换 + sha256 校验 + bootloader 回滚）
-- [ ] 部署：docker-compose 一键起服务
 
 ## 资料清单（docs/vendor/gdeb0709e01/）
 
