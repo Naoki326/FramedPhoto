@@ -251,8 +251,8 @@ FramedPhoto/
 
 ### 进行中
 
-- [ ] 全量 AI 照片分析（`tools/analyze_photos.py`，NAS 首轮同步已完成，373 文件 / 3.4 GB）
-- [ ] 完整真机验证：棋盘格 → WiFi → 服务端图片 → 每日精选 → 深度休眠
+- [ ] 断网重连 / 异常恢复（设备端）
+- [ ] docker-compose 一键部署
 
 ## 文档导航
 
