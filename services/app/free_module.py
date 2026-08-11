@@ -197,6 +197,27 @@ def _recent_titles(module_name: str, n: int = 8) -> list[str]:
     return _load_history().get(module_name, [])[-n:]
 
 
+def _birthday_days(module: dict, today: dt.date) -> str | None:
+    """若模块 prompt 含「YYYY年M月D日出生」，计算今天是出生第几天。
+
+    返回追加给 LLM 的指令文本（含算好的天数，不让 LLM 自己做算术），
+    无出生日期返回 None。
+    """
+    import re
+    m = re.search(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*出生", module.get("prompt", ""))
+    if not m:
+        return None
+    try:
+        born = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+    days = (today - born).days
+    if days < 0:
+        return None
+    return (f"宝宝出生日期：{born.year}年{born.month}月{born.day}日（今天出生第 {days} 天）。"
+            f"画面中的天数文字必须用『出生第 {days} 天』，不许自己计算或改写。")
+
+
 def _llm_content(module: dict, today: dt.date) -> dict | None:
     """调智谱 GLM 生成当天内容 {title, body, image_prompt}。无 key/失败返回 None。"""
     key = settings.zhipu_api_key
@@ -207,8 +228,11 @@ def _llm_content(module: dict, today: dt.date) -> dict | None:
     if recent:
         avoid = (f"最近已展示过的内容（必须避让，选择不同的）："
                  f"{'、'.join(recent)}。\n")
+    birthday = _birthday_days(module, today)
+    birthday_line = birthday + "\n" if birthday else ""
     user = (f"今天是 {today.year}年{today.month}月{today.day}日。\n"
             f"模块主题：{module['prompt']}\n"
+            f"{birthday_line}"
             f"{avoid}"
             f"插画风格：{module.get('style', '')}\n"
             "只输出 JSON。")

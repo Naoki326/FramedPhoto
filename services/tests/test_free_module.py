@@ -74,6 +74,24 @@ def test_pick_module_fixed_disabled_module(monkeypatch):
     assert picked is not None and picked["name"] == "读诗"
 
 
+def test_birthday_days_injects_exact_count():
+    """prompt 含出生日期 → 服务端算好天数注入，不让 LLM 自己算（避免算错）。"""
+    module = {"name": "宝宝成长记录", "enabled": False, "prompt": (
+        "画面中央写\"出生第 N 天\"（咖啡和花生 2026年5月6日出生，"
+        "请根据今天日期计算天数）"
+    ), "style": ""}
+    txt = fm._birthday_days(module, dt.date(2026, 8, 11))
+    assert txt is not None and "出生第 97 天" in txt
+    # 出生当天 = 第 0 天；无出生日期 → None
+    txt0 = fm._birthday_days(module, dt.date(2026, 5, 6))
+    assert txt0 is not None and "出生第 0 天" in txt0
+    plain = {"name": "读诗", "prompt": "挑一首古诗", "style": ""}
+    assert fm._birthday_days(plain, dt.date(2026, 8, 11)) is None
+    # 非法日期不崩溃
+    bad = {"name": "x", "prompt": "2026年13月40日出生", "style": ""}
+    assert fm._birthday_days(bad, dt.date(2026, 8, 11)) is None
+
+
 def test_pick_module_fixed_missing_falls_back_to_rotate(monkeypatch):
     """固定配置的模块不存在（如被删除）→ 回退轮换启用模块，且只轮换启用的。"""
     mods = fm.default_modules()
