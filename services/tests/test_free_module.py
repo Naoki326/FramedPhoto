@@ -81,10 +81,10 @@ def test_birthday_days_injects_exact_count():
         "请根据今天日期计算天数）"
     ), "style": ""}
     txt = fm._birthday_days(module, dt.date(2026, 8, 11))
-    assert txt is not None and "出生第 97 天" in txt
-    # 出生当天 = 第 0 天；无出生日期 → None
+    assert txt is not None and "出生第 98 天" in txt
+    # 出生当天 = 第 1 天；无出生日期 → None
     txt0 = fm._birthday_days(module, dt.date(2026, 5, 6))
-    assert txt0 is not None and "出生第 0 天" in txt0
+    assert txt0 is not None and "出生第 1 天" in txt0
     plain = {"name": "读诗", "prompt": "挑一首古诗", "style": ""}
     assert fm._birthday_days(plain, dt.date(2026, 8, 11)) is None
     # 非法日期不崩溃

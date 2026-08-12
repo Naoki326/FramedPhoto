@@ -211,8 +211,8 @@ def _birthday_days(module: dict, today: dt.date) -> str | None:
         born = dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
     except ValueError:
         return None
-    days = (today - born).days
-    if days < 0:
+    days = (today - born).days + 1   # 出生当天算第 1 天
+    if days < 1:
         return None
     return (f"宝宝出生日期：{born.year}年{born.month}月{born.day}日（今天出生第 {days} 天）。"
             f"画面中的天数文字必须用『出生第 {days} 天』，不许自己计算或改写。")
