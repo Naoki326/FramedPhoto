@@ -183,18 +183,27 @@ async def daily_selected():
 
 @router.post("/daily/select")
 async def daily_select(body: dict):
-    """手动指定今日精选照片（当日有效，次日恢复自动）。"""
+    """手动指定今日精选照片（当日有效，次日恢复自动）。
+
+    接受照片库（photo_lib_dir）与内容库上传图（upload_dir）下的路径；
+    优先以 photo_scores 里记录的路径形式保存（上传图入库为相对路径
+    如 uploads/xx.orig），确保 daily_manual_pick 能查到评分记录。
+    """
     from datetime import datetime as _dt
     from pathlib import Path as _P
     from app import runtime_config
     from app.config import settings as _s
     path = (body.get("path") or "").strip()
-    root = _P(_s.photo_lib_dir).resolve()
-    p = _P(path).resolve()
-    if not str(p).startswith(str(root)) or not p.is_file():
+    if not path:
         raise HTTPException(404, "photo not found")
-    runtime_config.save({"daily_manual": {"path": str(p), "date": _dt.now().strftime("%Y-%m-%d")}})
-    return {"ok": True, "path": str(p)}
+    p = _P(path).resolve()
+    roots = [_P(_s.photo_lib_dir).resolve(), _P(_s.upload_dir).resolve()]
+    if not any(p.is_relative_to(r) for r in roots) or not p.is_file():
+        raise HTTPException(404, "photo not found")
+    # 保存 DB 记录使用的路径形式（上传图为相对路径），保证手动指定可被查到
+    db_path = path if db.get_photo_score(path) else str(p)
+    runtime_config.save({"daily_manual": {"path": db_path, "date": _dt.now().strftime("%Y-%m-%d")}})
+    return {"ok": True, "path": db_path}
 
 
 @router.delete("/daily/select")

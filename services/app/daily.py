@@ -8,7 +8,8 @@ daily.py — 每日精选：历史上的今天选片 + 文案渲染。
   3. render_daily(): 选中的照片叠加文案（底部圆角衬底块 + 白字）→ FPS6
      → 存入每日精选目录，content 接口优先返回
 
-手动上传的图片永远优先于每日精选（用户主动上传 = 用户想看的）。
+手动指定（管理台「设为今日精选」）优先于自动选片；上传图经内容库
+「推送到显示」或被选为每日精选上屏（时段编排见 app/slots.py）。
 """
 from __future__ import annotations
 
@@ -82,7 +83,7 @@ def daily_manual_pick() -> dict | None:
     today = dt.datetime.now().strftime("%Y-%m-%d")
     if m.get("date") != today:
         return None
-    photo = db.get_photo_score(m["path"])
+    photo = db.get_photo_score(m["path"]) or db.get_photo_score(str(Path(m["path"]).resolve()))
     if not photo or not Path(photo["path"]).exists():
         return None
     return photo, True

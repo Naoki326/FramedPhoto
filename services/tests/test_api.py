@@ -48,19 +48,28 @@ def test_index_page():
 
 # ---------- 图片 ----------
 
-def test_upload_and_content():
+def test_upload_and_content(monkeypatch):
+    """上传 → 内容库 / FPS6 下载 / 预览 / 照片时段内容清单。
+
+    时段编排（ec3a10f）后 content 不再直接返回上传图：上传图自动
+    入照片库，照片时段经每日精选上屏（内容指纹 id = daily-*）。
+    固定照片时段，避免随运行时间变化。
+    """
+    from app import slots
+    monkeypatch.setattr(slots, "current_slot", lambda now=None: slots.SLOT_PHOTO)
+
     r = client.post("/api/images/upload", files={"file": ("a.png", _png_bytes(), "image/png")})
     assert r.status_code == 200, r.text
     meta = r.json()
     assert meta["width"] == 1200 and meta["height"] == 1600
     img_id = meta["id"]
 
-    # 内容清单
-    r = client.get("/api/images/content")
+    # 内容库列表：最新上传排第一
+    r = client.get("/api/images")
     assert r.status_code == 200
     items = r.json()["images"]
     assert items and items[0]["id"] == img_id
-    assert items[0]["url"].endswith("/raw")
+    assert items[0]["raw_url"].endswith("/raw")
 
     # raw 下载（FPS6 头）
     r = client.get(f"/api/images/{img_id}/raw")
@@ -72,6 +81,21 @@ def test_upload_and_content():
     r = client.get(f"/api/images/{img_id}/preview")
     assert r.status_code == 200
     assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    # 内容清单（照片时段）：返回当日精选（内容指纹 id = daily-*）。
+    # 具体选哪张由选片策略与会话内照片库状态决定，不在此过度断言。
+    r = client.get("/api/images/content")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source"] == "daily"
+    first = data["images"][0]
+    assert first["id"].startswith("daily-")
+    assert first["url"] == "/api/images/daily/raw"
+    assert first["filename"]
+
+    # 上传图已自动进入照片库评分表（可被选片/手动设为今日精选）
+    scores = client.get("/api/analysis/scores?limit=500").json()["scores"]
+    assert any(img_id in s["path"] for s in scores)
 
 
 def test_upload_invalid_file():
@@ -87,14 +111,54 @@ def test_delete_image():
     assert client.get(f"/api/images/{img_id}/raw").status_code == 404
 
 
-def test_content_with_device_heartbeat():
-    r = client.post("/api/images/upload", files={"file": ("c.png", _png_bytes(), "image/png")})
+def test_daily_select_accepts_uploads_path():
+    """回归：内容库上传图（uploads 路径）也能设为今日精选（此前 404）。"""
+    from app import daily, runtime_config
+
+    r = client.post("/api/images/upload",
+                    files={"file": ("daily.png", _png_bytes(color=(20, 120, 220)), "image/png")})
+    assert r.status_code == 200, r.text
     img_id = r.json()["id"]
+
+    # 上传后异步分析已写入 photo_scores（TestClient 同步执行后台任务）
+    scores = client.get("/api/analysis/scores?limit=500").json()["scores"]
+    rec = next(s for s in scores if img_id in s["path"])
+    uploads_path = rec["path"]  # 入库时的原始路径形式（上传图为 uploads/ 下）
+    assert "/uploads/" in uploads_path.replace("\\", "/")
+
+    # 用入库路径设置今日精选 → 此前 uploads 路径会被 404 拒绝
+    r = client.post("/api/images/daily/select", json={"path": uploads_path})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+    # 配置已写入，且能被 daily_manual_pick 查到
+    saved = runtime_config.load()["daily_manual"]
+    assert saved["path"] == uploads_path
+    pick = daily.daily_manual_pick()
+    assert pick is not None and pick[0]["path"] == uploads_path
+
+    # 越界路径仍被拒绝
+    r = client.post("/api/images/daily/select", json={"path": "/etc/hosts"})
+    assert r.status_code == 404
+
+    # 取消手动指定，恢复自动
+    r = client.delete("/api/images/daily/select")
+    assert r.status_code == 200
+    assert not runtime_config.load().get("daily_manual", {}).get("path")
+
+
+def test_content_with_device_heartbeat(monkeypatch):
+    """设备轮询 content 附带心跳：current_image 记录当前真正下发的内容 id。"""
+    from app import slots
+    monkeypatch.setattr(slots, "current_slot", lambda now=None: slots.SLOT_PHOTO)
+    r = client.post("/api/images/upload", files={"file": ("c.png", _png_bytes(), "image/png")})
+    assert r.status_code == 200
     r = client.get("/api/images/content?device_id=dev-test-1")
     assert r.status_code == 200
-    # 设备心跳被附带记录
+    served = r.json()["images"][0]["id"]   # 照片时段为 daily-* 指纹
+    assert served
     devices = client.get("/api/devices").json()["devices"]
-    assert any(d["id"] == "dev-test-1" and d["current_image"] == img_id for d in devices)
+    assert any(d["id"] == "dev-test-1" and d["current_image"] == served for d in devices)
 
 
 # ---------- 设备 ----------
