@@ -77,10 +77,11 @@ def test_upload_and_content(monkeypatch):
     assert r.content[:4] == b"FPS6"
     assert len(r.content) == 20 + 1200 * 1600 // 2
 
-    # preview
+    # preview（五源统一：原图缩放 ~800px JPEG，T4 #14）
     r = client.get(f"/api/images/{img_id}/preview")
     assert r.status_code == 200
-    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert r.headers["content-type"].startswith("image/jpeg")
+    assert r.content[:3] == b"\xff\xd8\xff"
 
     # 内容清单（照片时段）：返回当日精选（内容指纹 id = daily-*）。
     # 具体选哪张由选片策略与会话内照片库状态决定，不在此过度断言。
@@ -424,6 +425,7 @@ def _mock_free_degrade(monkeypatch):
     monkeypatch.setattr(fm, "_cache_fps6", None)   # 防跨测试内存缓存泄漏
     monkeypatch.setattr(fm, "_cache_ts", 0)
     monkeypatch.setattr(fm, "_cache_key", "")
+    monkeypatch.setattr(fm, "_cache_lib_id", None)
     return fm
 
 
@@ -463,6 +465,45 @@ def test_free_preview_404_without_original(monkeypatch, tmp_path):
     r = client.get("/api/images/free/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
+
+
+def test_free_preview_stays_own_card_after_new_upload(monkeypatch):
+    """回归（T4 #14）：自由模块预览在内容库新增上传后仍显示自己的卡片。
+
+    旧实现全上传目录按 mtime 猜「最新 .orig」：上传新照片后自由模块
+    预览错换成那张照片。收紧后原图获取只认自己落库的卡片（记录当前
+    卡片的库 id）。泛化 /{free-id}/preview 与固定 /free/preview 两条
+    路径都锁住：预览中心像素仍是卡片的奶油色插画底（文字卡背景
+    255/247/230），不是新上传的绿照片（20/180/60）。
+    """
+    _mock_free_degrade(monkeypatch)   # 降级文字卡（奶油底），同样入库
+    _set_single_slot("free")
+
+    # 生成当前卡片（refresh 绕开缓存，确保用本用例的降级 mock）
+    r = client.get("/api/images/free/raw?refresh=1")
+    assert r.status_code == 200, r.text
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    free_id = r.json()["images"][0]["id"]
+    assert free_id.startswith("free-"), free_id
+
+    # 内容库新增上传一张绿照片（uploads 下 mtime 全场最新的 .orig）
+    r = client.post("/api/images/upload",
+                    files={"file": ("new-green.png", _png_bytes(1200, 1600, (20, 180, 60)),
+                                    "image/png")})
+    assert r.status_code == 200, r.text
+
+    def assert_own_card(url: str):
+        resp = client.get(url)
+        assert resp.status_code == 200, (url, resp.text)
+        assert resp.headers["content-type"].startswith("image/jpeg"), url
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+        # 卡片自己的奶油色底，而非新上传的绿照片（r/b 高、非绿色主导）
+        assert r_ > 200 and b_ > 200 and not (g_ > r_), (url, r_, g_, b_)
+
+    assert_own_card("/api/images/free/preview")
+    assert_own_card(f"/api/images/{free_id}/preview")
 
 
 # ---------- 每日精选 / 内容库预览与缩略图（T4 #4：删帧还原回退） ----------
@@ -511,8 +552,12 @@ def test_daily_preview_404_without_original(monkeypatch, tmp_path):
     assert "original" in r.json()["detail"]
 
 
-def test_library_preview_serves_original_bytes():
-    """内容库预览 200：返回原图原样字节（品红 PNG，帧还原不可能产出同一文件）。"""
+def test_library_preview_thumbnail_and_download_serves_original():
+    """内容库预览变为 ~800px JPEG 缩略图（五源统一观感，T4 #14）。
+
+    缩略图内容来自原图（品红不在 6 色板，非帧还原）；全尺寸原图由既有
+    下载端点 /{id}/download 承接（原样字节 + 附件文件名）。
+    """
     png = _png_bytes(1200, 1600, _UNIQUE_RGB)
     r = client.post("/api/images/upload", files={"file": ("uniq.png", png, "image/png")})
     assert r.status_code == 200, r.text
@@ -520,8 +565,17 @@ def test_library_preview_serves_original_bytes():
 
     r = client.get(f"/api/images/{img_id}/preview")
     assert r.status_code == 200, r.text
-    assert r.headers["content-type"] == "image/png"
-    assert r.content == png
+    assert r.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    assert max(img.size) <= 800
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+
+    # 全尺寸原图由既有下载端点承接（行为不受预览泛化影响）
+    d = client.get(f"/api/images/{img_id}/download")
+    assert d.status_code == 200, d.text
+    assert d.content == png
+    assert "attachment" in d.headers["content-disposition"]
 
 
 def test_library_preview_404_without_original():
@@ -749,14 +803,13 @@ def _prepare_source(monkeypatch, prefix: str) -> str:
 
 @pytest.mark.parametrize("prefix,fixed_raw_url", _SOURCE_CASES)
 def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, fixed_raw_url):
-    """参数化契约测试（T2 #12 三源 → T3 #13 五源）：每源跑两断言。
+    """参数化契约测试（T2 #12 三源 → T3 #13 五源 → T4 #14 预览泛化）：每源跑三断言。
 
-    改道是双轨行为零变化：本用例把契约钉在 HTTP seam 上，改道前后都
-    必须绿。
     1. 分发命中：内容指纹 id 经 /{id}/raw 返回 200（不误落其他源 404），
        有对应固定路由的四源字节与固定路由完全一致；内容库（无前缀 id
        落兜底源）与既有直查行为一致；
-    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过。
+    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过；
+    3. 预览泛化（T4 #14）：/{id}/preview 五源共用，统一原图缩放 ~800px JPEG。
     """
     from app.epd_image import parse_fps6
     content_id = _prepare_source(monkeypatch, prefix)
@@ -774,6 +827,14 @@ def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, fixed_
 
     prepared = parse_fps6(dispatched.content)
     assert (prepared.width, prepared.height) == (1200, 1600)
+
+    # 预览泛化（T4 #14）：同一 id 的预览统一为原图缩放 ~800px JPEG
+    prev = client.get(f"/api/images/{content_id}/preview")
+    assert prev.status_code == 200, prev.text
+    assert prev.headers["content-type"].startswith("image/jpeg")
+    pimg = Image.open(io.BytesIO(prev.content))
+    assert max(pimg.size) <= 800
+
     if prefix == "display":
         # 置顶显示优先于时段，不清理会污染后续用例的 /content 断言
         _clear_display()
@@ -810,3 +871,33 @@ def test_news_prefix_alias_hits_free_source(monkeypatch):
     assert via_news.status_code == 200, via_news.text
     assert via_news.content == via_free.content
     assert via_news.content[:4] == b"FPS6"
+
+
+def test_preview_raw_fps6_no_original_404():
+    """泛化预览路由：直推帧（无原图）→ 404，不做帧还原兑底（T4 #14）。"""
+    _clear_display()
+    r = _post_frame(_valid_frame())
+    assert r.status_code == 200, r.text
+    content_id = r.json()["id"]
+
+    p = client.get(f"/api/images/{content_id}/preview")
+    assert p.status_code == 404, p.text
+    assert "original" in p.json()["detail"]
+    _clear_display()
+
+
+def test_preview_generalized_from_original_not_frame():
+    """泛化预览路由内容由原图而来：置顶上传品红图 → 预览含品红（非 6 色量化帧）。"""
+    _clear_display()
+    r = client.post("/api/images/display/upload",
+                    files={"file": ("gen.png", _png_bytes(1600, 1200, _UNIQUE_RGB), "image/png")})
+    assert r.status_code == 200, r.text
+    content_id = r.json()["id"]
+
+    p = client.get(f"/api/images/{content_id}/preview")
+    assert p.status_code == 200, p.text
+    assert p.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(p.content)).convert("RGB")
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+    _clear_display()

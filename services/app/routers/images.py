@@ -3,8 +3,8 @@ images.py — 图片上传 / 转换 / 内容管理（SQLite 持久化）。
 
 - POST /upload       上传原始图片，转换并保存 FPS6 设备格式
 - GET  ""            图片列表（Web 管理用）
-- GET  /{id}/raw     FPS6 二进制（设备下载）
-- GET  /{id}/preview PNG 预览（Web 展示）
+- GET  /{id}/raw     FPS6 二进制（设备下载，五源经内容源注册表分发）
+- GET  /{id}/preview 内容预览（五源共用：原图缩放 ~800px JPEG，缺原图 404）
 - DELETE /{id}       删除图片
 - GET  /content      内容清单（设备轮询，取最新一张）
 """
@@ -262,23 +262,20 @@ async def get_news_preview():
 
 @router.get("/free/preview")
 async def get_free_preview(module: str | None = None):
-    """自由模块预览：返回最近保存的卡片原图缩略图（量化前，省流量）。
+    """自由模块预览：当前卡片原图缩略图（量化前，省流量）。
 
-    自由模块渲染时 _save_to_library 会把加文字后的完整卡片 PNG 原图
-    （插画与降级文字卡两条路径）存入 uploads/{id}.orig。按 mtime 找最新一张
-    （即当前显示内容）。预览永远由原图缩放而来（ADR-0001）：
-    无卡片原图 → 404，不做帧还原兑底。module 参数仅为维持端点形状
-    保留（端点重排留给后续 ContentSource 改造，见 epic #1）。
+    原图获取只认自由模块自己落库的卡片（记录当前卡片的库 id，T4 #14），
+    不再全上传目录按 mtime 猜最新——内容库新增上传后预览不会再错换成
+    那张照片。预览永远由原图缩放而来（ADR-0001）：无当前卡片 / 入库
+    失败 / 原图缺失 → 404，不做帧还原兑底。module 参数仅为维持端点
+    形状保留（与渲染同选法，见 free_module.current_module）。
     """
-    try:
-        up = Path(settings.upload_dir)
-        origs = sorted(up.glob("*.orig"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if origs:
-            return Response(content=make_thumbnail(origs[0].read_bytes(), max_side=800),
-                            media_type="image/jpeg")
-    except Exception:
-        pass
-    raise HTTPException(404, "free card original missing")
+    from app.free_module import current_original
+    orig = current_original()
+    if not orig:
+        raise HTTPException(404, "free card original missing")
+    return Response(content=make_thumbnail(orig, max_side=800),
+                    media_type="image/jpeg")
 
 
 @router.get("/weather/raw")
@@ -417,18 +414,18 @@ async def get_raw(img_id: str):
 
 @router.get("/{img_id}/preview")
 async def get_preview(img_id: str):
-    """内容库图片预览：返回原图原样字节（探测 PNG/JPEG 定 Content-Type）。
-    预览永远由原图而来（ADR-0001）：原图缺失 → 404，不做帧还原兜底。
+    """内容预览（五源共用，T4 #14）：原图缩放 ~800px JPEG。
+
+    与 /{id}/raw 同经内容源注册表分发（ADR-0002）：五种内容源的 id
+    均可预览，统一由原图缩放而来（ADR-0001）；缺原图一律 404，
+    不做帧还原兑底。内容库的全尺寸原图由既有下载端点 /{id}/download 承接。
     """
-    _get_or_404(img_id)
-    orig = UPLOAD_DIR / f"{img_id}.orig"
-    if orig.exists():
-        head = orig.read_bytes()[:12]
-        if head[:8] == b"\x89PNG\r\n\x1a\n":
-            return Response(content=orig.read_bytes(), media_type="image/png")
-        if head[:3] == b"\xff\xd8\xff":
-            return Response(content=orig.read_bytes(), media_type="image/jpeg")
-    raise HTTPException(404, "image original missing")
+    source = content_sources.resolve(img_id)
+    orig = source.original(img_id)
+    if not orig:
+        raise HTTPException(404, "preview original missing")
+    return Response(content=make_thumbnail(orig, max_side=800),
+                    media_type="image/jpeg")
 
 
 THUMB_WIDTH = 400  # 内容库缩略图宽度（省流量）

@@ -476,13 +476,13 @@ def _detect_tiling(data: bytes) -> bool:
 
 # ═══════════════════════ 归档到内容库 ═══════════════════════
 
-def _save_to_library(module_name: str, png: bytes) -> None:
-    """把加文字后的完整卡片 PNG 原图自动保存到内容库。
+def _save_to_library(module_name: str, png: bytes) -> str | None:
+    """把加文字后的完整卡片 PNG 原图自动保存到内容库，返回库 id。
 
     - 用普通 uuid 作 id（避免 free- 前缀与 raw 转发分支冲突）
     - orig 保存原始 PNG（不裁剪 / 不 6 色量化 / 不转 FPS6），fps6 为设备格式副本
     - landscape=1（卡片为横屏视角）
-    - 失败仅记日志，不影响渲染主流程
+    - 失败仅记日志，不影响渲染主流程（返回 None：卡片无原图，预览 404）
     """
     try:
         import uuid
@@ -499,8 +499,10 @@ def _save_to_library(module_name: str, png: bytes) -> None:
         db.insert_image(img_id, f"自由模块·{module_name}", f"{img_id}.fps6",
                         prepared.width, prepared.height, landscape=1)
         logger.info("自由模块卡片原图已保存到内容库: %s (%s)", module_name, img_id)
+        return img_id
     except Exception as exc:  # noqa: BLE001
         logger.warning("自由模块卡片原图入库失败: %s", exc)
+        return None
 
 
 # ═══════════════════════ 对外入口（含缓存） ═══════════════════════
@@ -511,6 +513,9 @@ FREE_CACHE_TTL = 12 * 3600
 _cache_fps6: bytes | None = None
 _cache_ts: float = 0
 _cache_key: str = ""
+# 当前卡片落库的内容库 id（原图获取只认自己落库的卡片，T4 #14）：
+# 随帧缓存同生同灭，持久化在帧缓存文件的 .libid 边车里
+_cache_lib_id: str | None = None
 
 
 def _cache_file(module: dict, base: dt.datetime) -> Path:
@@ -518,6 +523,28 @@ def _cache_file(module: dict, base: dt.datetime) -> Path:
         json.dumps(module, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()[:8]
     return CACHE_DIR / f"free_{base:%Y%m%d%H%M}_{digest}.fps6"
+
+
+def _lib_id_file(cache_file: Path) -> Path:
+    """当前卡片库 id 的边车文件（与帧缓存同 stem，内容为库 id 文本）。"""
+    return cache_file.with_suffix(".libid")
+
+
+def _read_lib_id(cache_file: Path) -> str | None:
+    """读帧缓存边车里的库 id；无 / 空 / 不可读返回 None。"""
+    try:
+        txt = _lib_id_file(cache_file).read_text(encoding="utf-8").strip()
+        return txt or None
+    except OSError:
+        return None
+
+
+def _write_lib_id(cache_file: Path, lib_id: str | None) -> None:
+    """把库 id 写进帧缓存边车（入库失败写空，预览届时 404）。失败仅忽略。"""
+    try:
+        _lib_id_file(cache_file).write_text(lib_id or "", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _content_base(module_name: str | None) -> dt.datetime:
@@ -540,7 +567,7 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
     refresh=True 强制重生成（跳过缓存，管理台预览用）。
     module_name 指定时固定使用该模块（时段块固定配置）。
     """
-    global _cache_fps6, _cache_ts, _cache_key
+    global _cache_fps6, _cache_ts, _cache_key, _cache_lib_id
     if not free_enabled():
         return None
     module = pick_module(module_name=module_name)
@@ -559,6 +586,7 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
         if cache_file.exists() and (now - cache_file.stat().st_mtime) < FREE_CACHE_TTL:
             data = cache_file.read_bytes()
             _cache_fps6, _cache_ts, _cache_key = data, now, cache_key
+            _cache_lib_id = _read_lib_id(cache_file)   # 帧与库 id 边车同生同灭
             return data
 
     content = _llm_content(module, base.date())
@@ -570,6 +598,7 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
                     or f"{module.get('style', '温馨插画')}，主题：{module['prompt']}")
 
     data = None
+    lib_id: str | None = None   # 当前卡片落库的库 id（原图获取只认它，T4 #14）
     # 生成 + 平铺自检；异常时重试一次（重新调即梦出图），仍异常走文字卡降级
     for attempt in range(2):
         raw = _generate_illustration(image_prompt)
@@ -581,7 +610,7 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
             logger.warning("free card tiling detected, retry %d: %s", attempt + 1, module["name"])
             data = None
             continue
-        _save_to_library(module["name"], png)   # 自检通过才入库
+        lib_id = _save_to_library(module["name"], png)   # 自检通过才入库
         break
 
     if not data:
@@ -589,16 +618,18 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
         png = _render_text_card(module, title, body)
         if png:
             data = prepare_image(png, dither=True).data
-            _save_to_library(module["name"], png)
+            lib_id = _save_to_library(module["name"], png)
     if not data:
         logger.warning("free module render failed: %s", module["name"])
         return None
 
     try:
         cache_file.write_bytes(data)
+        _write_lib_id(cache_file, lib_id)   # 库 id 随帧缓存一同落盘
     except OSError:
         pass
     _cache_fps6, _cache_ts, _cache_key = data, now, cache_key
+    _cache_lib_id = lib_id
     return data
 
 
@@ -637,6 +668,27 @@ def current_module() -> str | None:
     return None
 
 
+def current_original() -> bytes | None:
+    """当前自由模块卡片的原图字节；只认自己落库的卡片（T4 #14 收紧）。
+
+    原图获取不再全上传目录按修改时间猜测（旧法会在内容库新增上传后
+    预览错换成那张照片）：仅读当前卡片落库时记录的库 id
+    （_cache_lib_id，随帧缓存同生同灭）。当前卡片不可渲染 / 未入库
+    （入库失败）/ 原图文件缺失 → None（预览 404，承 ADR-0001）。
+    """
+    if not render_free_fps6(module_name=current_module()):
+        return None
+    if not _cache_lib_id:
+        return None
+    try:
+        orig = Path(settings.upload_dir) / f"{_cache_lib_id}.orig"
+        if orig.is_file():
+            return orig.read_bytes()
+    except OSError:
+        pass
+    return None
+
+
 class FreeSource:
     """自由模块内容源：free- 前缀的渲染命名空间；news- 为旧称第二前缀。
 
@@ -670,17 +722,10 @@ class FreeSource:
     def original(self, content_id: str) -> bytes | None:
         """当前卡片原图（加文字后的完整卡片 PNG）字节；缺失返回 None。
 
-        现行选法与 /free/preview 一致：uploads 下按 mtime 最新 .orig。
-        收紧为「只认自由模块自己落库的卡片」由预览泛化改造承接（epic #10）。
+        只认自己落库的卡片（记录当前卡片的库 id，T4 #14），不再全上传
+        目录按修改时间猜测——否则内容库新增上传后预览会错换成那张照片。
         """
-        try:
-            up = Path(settings.upload_dir)
-            origs = sorted(up.glob("*.orig"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if origs:
-                return origs[0].read_bytes()
-        except OSError:
-            pass
-        return None
+        return current_original()
 
 
 SOURCE = FreeSource()
