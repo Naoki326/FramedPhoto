@@ -570,3 +570,124 @@ def test_library_thumb_404_without_original():
     r = client.get(f"/api/images/{img_id}/thumb")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
+
+
+# ---------- 临时显示 / 直推与校准（T5 #7：直推校验收编 + 当前显示删回退） ----------
+
+def _clear_display():
+    """清理临时显示状态（DISPLAY_FILE/META/ORIG 在模块级 Path 上，跨测试持久）。"""
+    client.delete("/api/images/display/current")
+
+
+def _valid_frame(w: int = 1200, h: int = 1600) -> bytes:
+    """构造头/长度自洽的 FPS6 帧（零填充数据区；直推路径只校验不渲染）。"""
+    import struct as _struct
+    return _struct.pack("<4sIIBB6x", b"FPS6", w, h, 1, 1) + bytes(w * h // 2)
+
+
+def _post_frame(payload: bytes, filename: str = "frame.fps6"):
+    return client.post("/api/images/display/raw-fps6",
+                       files={"file": (filename, payload, "application/octet-stream")})
+
+
+def test_display_raw_fps6_rejects_bad_magic():
+    """直推 magic 错（长度/尺寸自洽）→ 400 "not a FPS6 file"。"""
+    _clear_display()
+    bad = b"XXXX" + _valid_frame()[4:]
+    r = _post_frame(bad)
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "not a FPS6 file"
+
+
+def test_display_raw_fps6_rejects_short_header():
+    """直推连 20 字节头都不全 → 400 "not a FPS6 file"（与既有语义一致）。"""
+    r = _post_frame(b"FPS6" + b"\x00" * 10)
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "not a FPS6 file"
+
+
+def test_display_raw_fps6_rejects_truncated():
+    """直推截断帧（magic/尺寸对、数据区不足）→ 400 "truncated FPS6 payload"。"""
+    truncated = _valid_frame()[:-4096]
+    r = _post_frame(truncated)
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "truncated FPS6 payload"
+
+
+def test_display_raw_fps6_rejects_bad_size():
+    """直推尺寸不符（头写 800x600、长度自洽）→ 400 "size must be ..."。"""
+    r = _post_frame(_valid_frame(800, 600))
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "size must be 1200x1600, got 800x600"
+
+
+def test_display_raw_fps6_ok_then_preview_404():
+    """直推合法帧成功；「当前显示」预览无原图 → 404（帧还原回退已删）。"""
+    from app.routers import images as images_router
+    _clear_display()
+    frame = _valid_frame()
+    r = _post_frame(frame)
+    assert r.status_code == 200, r.text
+    meta = r.json()
+    assert meta["width"] == 1200 and meta["height"] == 1600
+    assert meta["has_orig"] is False
+
+    # 设备侧原样字节可下载；当前显示为 manual
+    assert client.get("/api/images/display/raw").content == frame
+    assert client.get("/api/images/display/current").json()["displaying"] == "manual"
+
+    # 预览：直推帧无原图 → 404；若帧还原兜底仍在会 200 PNG
+    r = client.get("/api/images/display/preview")
+    assert r.status_code == 404, r.text
+    assert "original" in r.json()["detail"]
+    assert not images_router.DISPLAY_ORIG.exists()
+    _clear_display()
+
+
+def test_display_upload_preview_200_from_original():
+    """普通临时上传（有原图）→ 预览 200，内容来自原图（品红非帧还原）。"""
+    _clear_display()
+    r = client.post("/api/images/display/upload",
+                    files={"file": ("m.png", _png_bytes(1600, 1200, _UNIQUE_RGB), "image/png")})
+    assert r.status_code == 200, r.text
+    r = client.get("/api/images/display/preview")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+    _clear_display()
+
+
+def test_calibration_generate_validates_frame(monkeypatch):
+    """校准图生成路径同样走统一帧校验：坏帧 400（中文消息保留）、不写 display；合法帧直推成功。"""
+    from app import calibration as calib
+    from app.routers import images as images_router
+    _clear_display()
+
+    # magic 错
+    monkeypatch.setattr(calib, "chart_fps6", lambda: b"XXXX" + b"\x00" * 96)
+    r = client.post("/api/calibration/generate")
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "不是有效的 FPS6 文件"
+    assert not images_router.DISPLAY_FILE.exists()
+
+    # 截断
+    monkeypatch.setattr(calib, "chart_fps6", lambda: _valid_frame()[:-4096])
+    r = client.post("/api/calibration/generate")
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "FPS6 数据不完整"
+
+    # 尺寸不符（长度自洽）
+    monkeypatch.setattr(calib, "chart_fps6", lambda: _valid_frame(640, 480))
+    r = client.post("/api/calibration/generate")
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "尺寸必须为 1200x1600，实际 640x480"
+
+    # 合法帧 → 直推成功，display 收到原样字节
+    good = _valid_frame()
+    monkeypatch.setattr(calib, "chart_fps6", lambda: good)
+    r = client.post("/api/calibration/generate")
+    assert r.status_code == 200, r.text
+    assert images_router.DISPLAY_FILE.read_bytes() == good
+    _clear_display()

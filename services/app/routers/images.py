@@ -13,7 +13,6 @@ import io
 import json
 import logging
 import re
-import struct
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -26,10 +25,9 @@ from PIL import Image, ImageOps
 from app import db, daily, nas_sync
 from app.config import settings
 from app.epd_image import (
-    PreparedImage,
     is_landscape,
+    parse_fps6,
     prepare_image,
-    preview_png_landscape,
 )
 
 logger = logging.getLogger(__name__)
@@ -318,7 +316,11 @@ DISPLAY_ORIG = UPLOAD_DIR / "display.orig.jpg"
 
 
 def _display_meta() -> dict | None:
-    """临时显示图元数据（含内容指纹）；无则 None。"""
+    """临时显示图元数据（含内容指纹）；无则 None。
+
+    帧头解读统一走 parse_fps6（内部自检口径，不校验尺寸）：
+    DISPLAY_FILE 损坏不可解析时视同无临时显示（回落时段自动内容）。
+    """
     if not DISPLAY_FILE.exists():
         return None
     m = {}
@@ -328,14 +330,18 @@ def _display_meta() -> dict | None:
         except (json.JSONDecodeError, OSError):
             m = {}
     raw = DISPLAY_FILE.read_bytes()
-    w, h = struct.unpack_from("<II", raw, 4)
+    try:
+        prepared = parse_fps6(raw)
+    except ValueError as exc:
+        logger.warning("display frame unreadable, treating as no manual display: %s", exc)
+        return None
     content_id = "display-" + hashlib.sha256(raw).hexdigest()[:10]
     return {
         "id": content_id,
         "filename": m.get("filename", ""),
         "landscape": 1 if m.get("landscape") else 0,
-        "width": w,
-        "height": h,
+        "width": prepared.width,
+        "height": prepared.height,
         "url": "/api/images/display/raw",
         "preview_url": "/api/images/display/preview",
         "has_orig": bool(m.get("has_orig")),
@@ -386,23 +392,41 @@ def _make_thumbnail(raw: bytes, max_side: int = 500, quality: int = 80) -> bytes
     return buf.getvalue()
 
 
+def _classify_fps6_error(msg: str) -> tuple[str, tuple[int, int] | None]:
+    """把 parse_fps6 的失败消息分类，供直推/校准端点回各自既有的 400 文案。
+
+    返回 ("magic"， None)（magic 错或头不全）| ("size", 实际宽高) |
+    ("length", None)（截断或长度不匹配）。
+    """
+    if "magic" in msg or "header" in msg:
+        return "magic", None
+    m = re.search(r"size (\d+)x(\d+) != expected", msg)
+    if m:
+        return "size", (int(m.group(1)), int(m.group(2)))
+    return "length", None
+
+
 @router.post("/display/raw-fps6")
 async def display_upload_raw_fps6(file: UploadFile = File(...)):
     """校准用：接收已量化的 FPS6 文件直接显示，不重新量化。
 
     用于 tools/generate_calibration_chart.py 生成的校准图——该图以设备
     nibble 直写六种纯色，必须绕过服务端量化，否则纯色会被重算破坏。
-    校验 magic/尺寸/长度后原样写入 DISPLAY_FILE，设备刷新即显示。
+    校验统一走 parse_fps6（magic/尺寸/长度），保留既有 400 语义与消息；
+    校验通过后原样写入 DISPLAY_FILE，设备刷新即显示。
     """
     raw = await file.read()
-    if len(raw) < 20 or raw[:4] != b"FPS6":
-        raise HTTPException(400, "not a FPS6 file")
-    w, h = struct.unpack_from("<II", raw, 4)
-    if (w, h) != (settings.epd_width, settings.epd_height):
-        raise HTTPException(400,
-                            f"size must be {settings.epd_width}x{settings.epd_height}, got {w}x{h}")
-    if len(raw) != 20 + w * h // 2:
-        raise HTTPException(400, "truncated FPS6 payload")
+    try:
+        parse_fps6(raw, expected_size=(settings.epd_width, settings.epd_height))
+    except ValueError as exc:
+        kind, actual = _classify_fps6_error(str(exc))
+        if kind == "magic":
+            raise HTTPException(400, "not a FPS6 file") from exc
+        if kind == "size":
+            raise HTTPException(
+                400, f"size must be {settings.epd_width}x{settings.epd_height},"
+                     f" got {actual[0]}x{actual[1]}") from exc
+        raise HTTPException(400, "truncated FPS6 payload") from exc
     DISPLAY_FILE.write_bytes(raw)
     DISPLAY_ORIG.unlink(missing_ok=True)   # 校准图直推无原图，清理旧缩略图
     DISPLAY_META.write_text(json.dumps({
@@ -432,18 +456,16 @@ async def display_raw():
 
 @router.get("/display/preview")
 async def display_preview():
-    """当前显示预览：有原图缩略图则返回原图（量化前，省流量），
-    否则（校准图直推）回退为 FPS6 数据还原渲染。"""
+    """当前显示预览：有原图缩略图则返回原图（量化前，省流量）。
+
+    预览永远由原图而来（ADR-0001）：无原图（如直推的外部 FPS6 /
+    校准图，本就无原图）→ 404，不做帧还原兜底。
+    """
     if not DISPLAY_FILE.exists():
         raise HTTPException(404, "no display image")
-    meta = _display_meta()
     if DISPLAY_ORIG.exists():
         return Response(content=DISPLAY_ORIG.read_bytes(), media_type="image/jpeg")
-    raw = DISPLAY_FILE.read_bytes()
-    w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw)
-    return Response(content=preview_png_landscape(prepared, bool(meta and meta["landscape"])),
-                    media_type="image/png")
+    raise HTTPException(404, "display original missing")
 
 
 @router.delete("/display/current")

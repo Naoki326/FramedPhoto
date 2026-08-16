@@ -7,28 +7,33 @@
 - POST   "/photo/marked" 上传照片并返回采样区标注图（供核对采样位置）
 - DELETE ""            清除校准，恢复默认占位
 """
-import io
-import struct
+import re
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from app import calibration
 from app.config import settings
+from app.epd_image import parse_fps6
 from app.routers import images as images_router
 
 router = APIRouter()
 
 
 def _validate_fps6(raw: bytes, expected: tuple[int, int] | None = None) -> tuple[int, int]:
-    if len(raw) < 20 or raw[:4] != b"FPS6":
-        raise HTTPException(400, "不是有效的 FPS6 文件")
-    w, h = struct.unpack_from("<II", raw, 4)
-    if expected and (w, h) != expected:
-        raise HTTPException(400, f"尺寸必须为 {expected[0]}x{expected[1]}，实际 {w}x{h}")
-    if len(raw) != 20 + w * h // 2:
-        raise HTTPException(400, "FPS6 数据不完整")
-    return w, h
+    """校准直推路径的帧校验：统一走 parse_fps6，保留既有 400 语义与中文消息。"""
+    try:
+        prepared = parse_fps6(raw, expected_size=expected)
+    except ValueError as exc:
+        kind, actual = images_router._classify_fps6_error(str(exc))
+        if kind == "magic":
+            raise HTTPException(400, "不是有效的 FPS6 文件") from exc
+        if kind == "size":
+            raise HTTPException(
+                400, f"尺寸必须为 {expected[0]}x{expected[1]}，"
+                     f"实际 {actual[0]}x{actual[1]}") from exc
+        raise HTTPException(400, "FPS6 数据不完整") from exc
+    return prepared.width, prepared.height
 
 
 @router.get("")
