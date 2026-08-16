@@ -74,8 +74,11 @@ def select_daily_photo() -> tuple[dict | None, bool]:
     return _weighted_choice(top), False
 
 
-def daily_manual_pick() -> dict | None:
-    """管理台手动指定的今日照片（当日有效）。"""
+def daily_manual_pick() -> tuple[dict, bool] | None:
+    """管理台手动指定的今日照片（当日有效）。
+
+    返回 (photo, is_today_match)；手动指定即当日生效，恒为当日匹配。
+    """
     from app.runtime_config import load
     m = load().get("daily_manual") or {}
     if not m.get("path"):
@@ -94,7 +97,11 @@ def render_daily() -> dict | None:
 
     手动指定（管理台「设为今日精选」）优先，其次自动选片。
     """
-    photo, is_today_match = daily_manual_pick() or select_daily_photo()
+    manual = daily_manual_pick()
+    if manual is not None:
+        photo, is_today_match = manual
+    else:
+        photo, is_today_match = select_daily_photo()
     if not photo:
         return None
     path = photo["path"]
@@ -163,8 +170,10 @@ def daily_is_fresh(ttl_seconds: int = 20 * 3600) -> bool:
         return False
     # 手动指定与当前渲染不一致 → 需要重渲染
     manual = daily_manual_pick()
-    if manual and meta.get("path") != manual[0]["path"]:
-        return False
+    if manual is not None:
+        manual_photo, _is_match = manual
+        if meta.get("path") != manual_photo["path"]:
+            return False
     return True
 
 
