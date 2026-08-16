@@ -1,5 +1,9 @@
 # FPS6 设备格式协议（v1）
 
+> **本文是 FPS6 帧格式的唯一人写权威。** 帧格式的任何改动只改本文一处；
+> 服务端实现（`services/app/epd_image.py` 的打包/解析）与固件常量
+> （`firmware/main/fps6_format.h`）均以本文为准，不得另立副本。
+
 FramedPhoto 服务端与设备端之间的图片交换格式，与 GDEB0709E01 驱动布局一一对应。
 
 ## 文件结构
@@ -10,10 +14,25 @@ FramedPhoto 服务端与设备端之间的图片交换格式，与 GDEB0709E01 �
 4      4      width  (u32 LE) = 1200
 8      4      height (u32 LE) = 1600
 12     1      format = 1（4bit 双 IC 布局）
-13     1      palette_version = 1
+13     1      palette_version = 1（恒为 1，保留字段：写入方恒写 1，读取方不解释、不校验）
 14     6      reserved（置 0）
 20     960000 数据区（1200*1600/2 字节）
 ```
+
+## 帧校验（服务端 `parse_fps6`）
+
+解析入口 `services/app/epd_image.py` 的 `parse_fps6(frame, expected_size=None)`：
+
+- **magic 与长度必检**：magic 必须为 `"FPS6"`；整帧长度必须等于
+  `20 + width*height/2` 字节（短于为截断，长于为长度不符；短于 20 字节头
+  同样视为截断）。
+- **尺寸校验可选**：调用方传 `expected_size` 时校验帧头 width/height 与之
+  相等（上传场景传入，坏图自检等内部场景不传）。
+- **format、palette_version、reserved 为保留字段**：解析不读取、不校验其值
+  （`palette_version` 写入方恒写 1）。
+
+固件侧（`firmware/main/content_client.c`）下载帧校验口径一致：先验 magic 与
+宽高（1200x1600），坏帧零字节落分区、按下载失败重试。
 
 ## 数据区布局（format=1）
 

@@ -8,19 +8,10 @@ epd_image.py — 为 E Ink Spectra 6 屏幕准备图像。
   3. 量化到 Spectra 6 色板（6 色），Floyd–Steinberg 抖动补偿色阶损失
   4. 封装为 FPS6 设备格式（4bit/像素，双 IC 布局），设备端直接转发到驱动
 
-设备格式（FPS6 v1, format=1）：
-  - 头 20 字节：magic "FPS6" | width u32LE | height u32LE | format u8 | palette_version u8 | reserved 6B
-  - 数据区 960000 字节（1200*1600/2）
-  - 每行 600 字节：前 300B 送 IC0（左半屏），后 300B 送 IC1（右半屏）
-  - 行内像素从左到右：字节 k 对应逻辑像素 (2k, 2k+1)，高 nibble 为左像素
-  - 颜色 nibble：黑 0x0 白 0x1 黄 0x2 红 0x3 蓝 0x5 绿 0x6（与官方驱动一致）
-
-注意：早期版本把行内像素按“从右到左”打包（对应官方示例的水平扫描方向），
-但实测 GDEB0709E01 双 IC 的扫描方向为从左到右、IC0 实际控制左半屏，
-RTL 打包会导致整图水平镜像。2026-08 已在真机验证：LTR 打包显示正常。
-
-与固件对接：firmware/components/gdey_epd/ 的 gdeb0709e01_display_image()
-直接接受该数据区；逐行读 600B 即可（前 300B IC0、后 300B IC1）。
+FPS6 帧格式（帧头字段布局、双 IC 行布局、颜色 nibble、LTR 打包历史说明）
+以 docs/protocol/fps6-format.md 为唯一人写权威，本模块不重复维护格式说明；
+固件侧常量见 firmware/main/fps6_format.h，驱动对接见
+firmware/components/gdey_epd/（gdeb0709e01_display_image 直接接受数据区）。
 """
 from __future__ import annotations
 
@@ -200,7 +191,7 @@ class PreparedImage:
 
     @property
     def raw_index(self) -> bytes:
-        """数据区：960000 字节设备布局。"""
+        """数据区：width*height/2 字节设备布局（帧格式见协议文档）。"""
         return self.data[HEADER_SIZE:]
 
 
