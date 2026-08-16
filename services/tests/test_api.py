@@ -330,10 +330,20 @@ def _mock_weather(monkeypatch):
 
 
 def test_weather_render_writes_same_stem_original(monkeypatch):
-    """渲染成功 → 缓存目录出现与帧同 stem 的原图（横屏视角彩色 PNG）。"""
-    wc = _mock_weather(monkeypatch)
+    """渲染成功 → 缓存目录出现与帧同 stem 的原图（横屏视角彩色 PNG）。
 
-    r = client.get("/api/images/weather/raw")
+    渲染触发走泛化下载契约 /{id}/raw（固定 /weather/raw 已退役，T7 #17）。
+    """
+    wc = _mock_weather(monkeypatch)
+    _clear_display()
+    _set_single_slot("weather")
+
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    content_id = r.json()["images"][0]["id"]
+    assert content_id.startswith("weather-"), content_id
+
+    r = client.get(f"/api/images/{content_id}/raw")
     assert r.status_code == 200, r.text
     assert r.content[:4] == b"FPS6"
 
@@ -350,8 +360,14 @@ def test_weather_render_writes_same_stem_original(monkeypatch):
 def test_weather_preview_from_original_not_frame(monkeypatch):
     """预览内容来自落盘原图：含 6 色板外的品红色，不可能是帧还原产物。"""
     _mock_weather(monkeypatch)
+    _clear_display()
+    _set_single_slot("weather")
 
-    r = client.get("/api/images/weather/preview")
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    content_id = r.json()["images"][0]["id"]
+
+    r = client.get(f"/api/images/{content_id}/preview")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("image/jpeg")
     img = Image.open(io.BytesIO(r.content)).convert("RGB")
@@ -359,13 +375,18 @@ def test_weather_preview_from_original_not_frame(monkeypatch):
     assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
 
 
-def test_weather_preview_unavailable_503(monkeypatch):
-    """天气数据不可用 → 预览 503，无帧还原兑底路径。"""
+def test_weather_unavailable_404(monkeypatch):
+    """天气数据不可用且无当日缓存 → 泛化路由 404，无帧还原兑底路径。
+
+    固定路由时代的 503 语义随路由退役（T7 #17）；泛化 /{id}/raw 的
+    不可用语义是 404（源 missing_detail，与各源改道语义一致），
+    预览缺原图 → 404（承 ADR-0001）。
+    """
     from app import weather_card
     monkeypatch.setattr(weather_card, "fetch_weather", lambda: None)
 
-    assert client.get("/api/images/weather/preview").status_code == 503
-    assert client.get("/api/images/weather/raw").status_code == 503
+    assert client.get("/api/images/weather-unavail00/raw").status_code == 404
+    assert client.get("/api/images/weather-unavail00/preview").status_code == 404
 
 
 def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_path):
@@ -387,7 +408,9 @@ def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_pa
             p.write_bytes(b"x")
             os.utime(p, (t, t))
 
-    r = client.get("/api/images/weather/raw")   # 触发渲染 + 滚动清理
+    r = client.get("/api/images/content")   # 触发渲染（清单元数据确保当前内容）
+    assert r.status_code == 200, r.text
+    r = client.get(f"/api/images/{r.json()['images'][0]['id']}/raw")   # 触发渲染 + 滚动清理
     assert r.status_code == 200, r.text
 
     frames = {p.stem for p in wc.CACHE_DIR.glob("weather_*.fps6")}
@@ -405,7 +428,11 @@ def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_pa
 def test_weather_settings_clear_removes_originals_too(monkeypatch):
     """保存天气设置清帧缓存时，同 stem 原图同批清理（不残留孤儿）。"""
     wc = _mock_weather(monkeypatch)
-    assert client.get("/api/images/weather/raw").status_code == 200
+    _clear_display()
+    _set_single_slot("weather")
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/images/{r.json()['images'][0]['id']}/raw").status_code == 200
     frames = list(wc.CACHE_DIR.glob("weather_*.fps6"))
     origs = list(wc.CACHE_DIR.glob("weather_*.png"))
     assert frames and origs
@@ -432,15 +459,25 @@ def _mock_free_degrade(monkeypatch):
 
 
 def test_free_degraded_text_card_saved_and_preview_200(monkeypatch):
-    """降级生成纯文字卡后，内容库出现该卡片原图，预览 200。"""
+    """降级生成纯文字卡后，内容库出现该卡片原图，泛化预览 200。
+
+    生成触发走 POST /free/regenerate（GET /free/raw 的 refresh 参数随固定
+    路由退役，T7 #17），下载与预览走泛化 /{id}/raw|preview。
+    """
     from pathlib import Path
     from app import db
     from app.config import settings
     _mock_free_degrade(monkeypatch)
+    _set_single_slot("free")
 
-    r = client.get("/api/images/free/raw?refresh=true")
+    r = client.post("/api/images/free/regenerate")
     assert r.status_code == 200, r.text
-    assert r.content[:4] == b"FPS6"
+    content_id = r.json()["item"]["id"]
+    assert content_id.startswith("free-"), content_id
+
+    dl = client.get(f"/api/images/{content_id}/raw")
+    assert dl.status_code == 200, dl.text
+    assert dl.content[:4] == b"FPS6"
 
     # 内容库出现该卡片原图（降级路径同样归档）
     cards = [m for m in db.list_images() if m["filename"].startswith("自由模块·")]
@@ -448,23 +485,23 @@ def test_free_degraded_text_card_saved_and_preview_200(monkeypatch):
     up = Path(settings.upload_dir)
     assert (up / f"{cards[0]['id']}.orig").exists()
 
-    # 预览 200（来自入库原图缩略，非帧还原）
-    r = client.get("/api/images/free/preview")
+    # 预览 200（泛化路由，来自入库原图缩略，非帧还原）
+    r = client.get(f"/api/images/{content_id}/preview")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("image/jpeg")
 
 
-def test_free_preview_404_without_original(monkeypatch, tmp_path):
-    """无任何卡片原图 → 404，不再有帧还原兑底（帧可渲染也不用于预览）。"""
-    from app import free_module as fm
-    from app.config import settings
+def test_free_preview_404_without_original(monkeypatch):
+    """无任何卡片原图 → 泛化预览 404，不再有帧还原兑底（帧可渲染也不用于预览）。
+
+    若帧还原分支仍在，这里会 200：render 可用但未入库（无库 id 可读原图）。
+    """
     from app.epd_image import prepare_image
-    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
-    # 渲染可用（返回合法帧）也不得用于预览：若帧还原分支仍在，这里会 200 PNG
+    fm = _mock_free_degrade(monkeypatch)
     frame = prepare_image(_png_bytes(1728, 1296, (10, 200, 10)), dither=True).data
     monkeypatch.setattr(fm, "render_free_fps6", lambda **kw: frame)
 
-    r = client.get("/api/images/free/preview")
+    r = client.get("/api/images/free-nooriginal00/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
 
@@ -474,19 +511,17 @@ def test_free_preview_stays_own_card_after_new_upload(monkeypatch):
 
     旧实现全上传目录按 mtime 猜「最新 .orig」：上传新照片后自由模块
     预览错换成那张照片。收紧后原图获取只认自己落库的卡片（记录当前
-    卡片的库 id）。泛化 /{free-id}/preview 与固定 /free/preview 两条
-    路径都锁住：预览中心像素仍是卡片的奶油色插画底（文字卡背景
-    255/247/230），不是新上传的绿照片（20/180/60）。
+    卡片的库 id）。泛化 /{free-id}/preview 锁住：预览中心像素仍是
+    卡片的奶油色插画底（文字卡背景 255/247/230），不是新上传的
+    绿照片（20/180/60）。固定 /free/preview 随路由退役（T7 #17）。
     """
     _mock_free_degrade(monkeypatch)   # 降级文字卡（奶油底），同样入库
     _set_single_slot("free")
 
-    # 生成当前卡片（refresh 绕开缓存，确保用本用例的降级 mock）
-    r = client.get("/api/images/free/raw?refresh=1")
+    # 生成本用例的降级 mock 卡片（重生成端点，不再借固定 raw 的 refresh）
+    r = client.post("/api/images/free/regenerate")
     assert r.status_code == 200, r.text
-    r = client.get("/api/images/content")
-    assert r.status_code == 200, r.text
-    free_id = r.json()["images"][0]["id"]
+    free_id = r.json()["item"]["id"]
     assert free_id.startswith("free-"), free_id
 
     # 内容库新增上传一张绿照片（uploads 下 mtime 全场最新的 .orig）
@@ -504,13 +539,12 @@ def test_free_preview_stays_own_card_after_new_upload(monkeypatch):
         # 卡片自己的奶油色底，而非新上传的绿照片（r/b 高、非绿色主导）
         assert r_ > 200 and b_ > 200 and not (g_ > r_), (url, r_, g_, b_)
 
-    assert_own_card("/api/images/free/preview")
     assert_own_card(f"/api/images/{free_id}/preview")
 
 
 def test_free_regenerate_endpoint(monkeypatch):
-    """POST /free/regenerate（T6 #16）：与既有 GET /free/raw 的 refresh 参数
-    同一条生成路径。
+    """POST /free/regenerate（T6 #16）：跳过当日内缓存强制重生成，走
+    render_free_fps6(refresh=True) 同一条生成路径（选模块与 /content 一致）。
 
     已有当日内缓存时 POST 仍强制重生成（换一份 LLM 内容 → 内容指纹变化）；
     返回新卡片的清单条目，url/preview_url 为 /api/images/{id}/raw|preview
@@ -519,10 +553,9 @@ def test_free_regenerate_endpoint(monkeypatch):
     fm = _mock_free_degrade(monkeypatch)
     _set_single_slot("free")
 
-    # 先生成当日卡片（无 refresh：建立当日内缓存）
-    r = client.get("/api/images/free/raw")
-    assert r.status_code == 200, r.text
+    # 先经 /content 生成当日卡片（建立当日内缓存）
     r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
     id_before = r.json()["images"][0]["id"]
     assert id_before.startswith("free-"), id_before
 
@@ -577,13 +610,17 @@ def _fake_daily_meta(path: str) -> dict:
 
 
 def test_daily_preview_200_from_original(monkeypatch, tmp_path):
-    """每日精选预览 200：内容来自原图（品红不在 6 色板，非帧还原）。"""
+    """每日精选预览 200：内容来自原图（品红不在 6 色板，非帧还原）。
+
+    走泛化 /{id}/preview（固定 /daily/preview 已退役，T7 #17）；
+    id 不是查找键，任意 daily- 前缀 id 都服务当前精选。
+    """
     from app import daily
     photo = tmp_path / "daily_orig.png"
     photo.write_bytes(_png_bytes(1200, 1600, _UNIQUE_RGB))
     monkeypatch.setattr(daily, "ensure_daily", lambda: _fake_daily_meta(str(photo)))
 
-    r = client.get("/api/images/daily/preview")
+    r = client.get("/api/images/daily-anycard0000/preview")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("image/jpeg")
     img = Image.open(io.BytesIO(r.content)).convert("RGB")
@@ -592,7 +629,8 @@ def test_daily_preview_200_from_original(monkeypatch, tmp_path):
 
 
 def test_daily_preview_404_without_original(monkeypatch, tmp_path):
-    """每日精选原图失效 → 404；当日帧文件仍在也不得帧还原（否则会 200 PNG）。"""
+    """每日精选原图失效 → 泛化预览 404；当日帧文件仍在也不得帧还原
+    （否则会 200）。"""
     from app import daily
     from app.epd_image import prepare_image
     daily.DAILY_DIR.mkdir(parents=True, exist_ok=True)
@@ -600,7 +638,7 @@ def test_daily_preview_404_without_original(monkeypatch, tmp_path):
     monkeypatch.setattr(daily, "ensure_daily",
                         lambda: _fake_daily_meta(str(tmp_path / "gone.png")))
 
-    r = client.get("/api/images/daily/preview")
+    r = client.get("/api/images/daily-nocard00000/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
 
@@ -738,13 +776,14 @@ def test_display_raw_fps6_ok_then_preview_404():
     meta = r.json()
     assert meta["width"] == 1200 and meta["height"] == 1600
     assert meta["has_orig"] is False
+    content_id = meta["id"]
 
-    # 设备侧原样字节可下载；当前显示为 manual
-    assert client.get("/api/images/display/raw").content == frame
+    # 设备侧原样字节可下载（泛化下载契约）；当前显示为 manual
+    assert client.get(f"/api/images/{content_id}/raw").content == frame
     assert client.get("/api/images/display/current").json()["displaying"] == "manual"
 
     # 预览：直推帧无原图 → 404；若帧还原兜底仍在会 200 PNG
-    r = client.get("/api/images/display/preview")
+    r = client.get(f"/api/images/{content_id}/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
     assert not display.DISPLAY_ORIG.exists()
@@ -752,12 +791,13 @@ def test_display_raw_fps6_ok_then_preview_404():
 
 
 def test_display_upload_preview_200_from_original():
-    """普通临时上传（有原图）→ 预览 200，内容来自原图（品红非帧还原）。"""
+    """普通临时上传（有原图）→ 泛化预览 200，内容来自原图（品红非帧还原）。"""
     _clear_display()
     r = client.post("/api/images/display/upload",
                     files={"file": ("m.png", _png_bytes(1600, 1200, _UNIQUE_RGB), "image/png")})
     assert r.status_code == 200, r.text
-    r = client.get("/api/images/display/preview")
+    content_id = r.json()["id"]
+    r = client.get(f"/api/images/{content_id}/preview")
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("image/jpeg")
     img = Image.open(io.BytesIO(r.content)).convert("RGB")
@@ -800,7 +840,7 @@ def test_calibration_generate_validates_frame(monkeypatch):
     _clear_display()
 
 
-# ---------- 内容源注册表改道（T2 #12：三源经注册表分发，raw 字节与固定路由一致） ----------
+# ---------- 内容源契约测试（T7 #17 收口：每源四断言全套，ADR-0002） ----------
 
 def _set_single_slot(slot_type: str) -> None:
     """固定全天时段为单一类型（runtime_config 白名单路径，与 /content 同源）。"""
@@ -808,35 +848,31 @@ def _set_single_slot(slot_type: str) -> None:
     runtime_config.save({"slot_segments": [{"start": "00:00", "type": slot_type}]})
 
 
-# (源前缀, 对应固定 raw 路由；None = 无固定路由——内容库的设备下载端点
-#  历来就是 /{id}/raw 本身，无独立固定路由可比)
-_SOURCE_CASES = [
-    ("daily", "/api/images/daily/raw"),
-    ("weather", "/api/images/weather/raw"),
-    ("free", "/api/images/free/raw"),
-    ("display", "/api/images/display/raw"),
-    ("library", None),
-]
+# 五种内容源（ADR-0002）：display/daily/weather/free 带前缀，library 为
+# 无前缀兑底源（id 是查找键，进清单走推送注入而非源 meta()）
+_SOURCE_CASES = ["daily", "weather", "free", "display", "library"]
 
 
-def _prepare_source(monkeypatch, prefix: str) -> str:
-    """按既有流程（上传图片 / 置顶上传 / 桩外部依赖 / 时段配置）产出「当前有效 id」。
+def _prepare_source(monkeypatch, prefix: str) -> tuple[str, dict]:
+    """按既有流程（上传图片 / 置顶上传 / 桩外部依赖 / 时段配置）产出
+    「当前有效 id」与「元数据条目」（T7 #17 契约四断言之四）。
 
-    五源（T3 #13）：display 经置顶显示上传（优先于一切时段内容）；
-    library 经普通上传（id 即内容库查找键，无前缀）。
+    display 经置顶显示上传（优先于一切时段内容，/content 即返回其条目）；
+    library 经普通上传（元数据即上传响应；内容库没有「当前内容」概念，
+    进清单走推送注入）；其余三源经时段配置 + /content。
     """
+    _clear_display()
     if prefix == "display":
-        _clear_display()
         r = client.post("/api/images/display/upload",
                         files={"file": ("disp.png", _png_bytes(1600, 1200, (198, 40, 40)), "image/png")})
         assert r.status_code == 200, r.text
-        return r.json()["id"]
-    if prefix == "library":
+    elif prefix == "library":
         r = client.post("/api/images/upload",
                         files={"file": ("lib.png", _png_bytes(color=(40, 128, 60)), "image/png")})
         assert r.status_code == 200, r.text
-        return r.json()["id"]
-    if prefix == "daily":
+        meta = r.json()
+        return meta["id"], meta
+    elif prefix == "daily":
         _set_single_slot("photo")
         r = client.post("/api/images/upload",
                         files={"file": ("contract.png", _png_bytes(color=(30, 90, 200)), "image/png")})
@@ -851,42 +887,52 @@ def _prepare_source(monkeypatch, prefix: str) -> str:
     assert r.status_code == 200, r.text
     images = r.json()["images"]
     assert images, f"{prefix} 源应有当前内容"
-    return images[0]["id"]
+    return images[0]["id"], images[0]
 
 
-@pytest.mark.parametrize("prefix,fixed_raw_url", _SOURCE_CASES)
-def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, fixed_raw_url):
-    """参数化契约测试（T2 #12 三源 → T3 #13 五源 → T4 #14 预览泛化）：每源跑三断言。
+@pytest.mark.parametrize("prefix", _SOURCE_CASES)
+def test_content_source_contract(monkeypatch, prefix):
+    """参数化契约测试收口（T2 #12 三源 → T3 #13 五源 → T4 #14 预览泛化 →
+    T7 #17 收口）：每源四断言全套——固定路由退役后，本套即各源对外
+    契约的全部断言（新源接入自动继承全套）。
 
-    1. 分发命中：内容指纹 id 经 /{id}/raw 返回 200（不误落其他源 404），
-       有对应固定路由的四源字节与固定路由完全一致；内容库（无前缀 id
-       落兜底源）与既有直查行为一致；
-    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过；
-    3. 预览泛化（T4 #14）：/{id}/preview 五源共用，统一原图缩放 ~800px JPEG。
+    1. 前缀分发命中：内容指纹 id 经 /{id}/raw 返回 200（不误落其他源 404）；
+    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式 / 尺寸通过；
+    3. 预览由原图而来：统一原图缩放 ~800px JPEG（缺原图 → 404 的另一半
+       由各源专项用例锁：daily/library/free/display/weather 各有缺原图用例）；
+    4. 元数据字段齐全：清单条目（display/daily/weather/free）或上传响应
+       元数据（library）字段集与契约一致（逐字段基准见 T5 #15 对比测试）。
     """
     from app.epd_image import parse_fps6
-    content_id = _prepare_source(monkeypatch, prefix)
+    content_id, meta_item = _prepare_source(monkeypatch, prefix)
 
     if prefix != "library":
         assert content_id.startswith(prefix + "-"), content_id
 
+    # 1) 前缀分发命中：/{id}/raw 返回当前内容的帧
     dispatched = client.get(f"/api/images/{content_id}/raw")
     assert dispatched.status_code == 200, dispatched.text
     assert dispatched.headers["content-type"] == "application/octet-stream"
-    if fixed_raw_url is not None:
-        fixed = client.get(fixed_raw_url)
-        assert fixed.status_code == 200, fixed.text
-        assert dispatched.content == fixed.content
 
+    # 2) raw 可过帧解析（oracle 用领域函数，不用内部接口）
     prepared = parse_fps6(dispatched.content)
     assert (prepared.width, prepared.height) == (1200, 1600)
 
-    # 预览泛化（T4 #14）：同一 id 的预览统一为原图缩放 ~800px JPEG
+    # 3) 预览由原图而来：原图缩放 ~800px JPEG
     prev = client.get(f"/api/images/{content_id}/preview")
     assert prev.status_code == 200, prev.text
     assert prev.headers["content-type"].startswith("image/jpeg")
     pimg = Image.open(io.BytesIO(prev.content))
     assert max(pimg.size) <= 800
+
+    # 4) 元数据字段齐全
+    if prefix == "library":
+        # 内容库无「当前内容」概念：元数据即上传响应（进清单走推送注入）
+        assert {"id", "filename", "width", "height", "landscape", "created_at",
+                "raw_url", "preview_url"} <= set(meta_item), set(meta_item)
+    else:
+        assert set(meta_item) == _MANIFEST_FIELD_SETS[prefix], \
+            f"{prefix}: 元数据字段集与契约不一致: {set(meta_item) ^ _MANIFEST_FIELD_SETS[prefix]}"
 
     if prefix == "display":
         # 置顶显示优先于时段，不清理会污染后续用例的 /content 断言
@@ -924,6 +970,41 @@ def test_news_prefix_alias_hits_free_source(monkeypatch):
     assert via_news.status_code == 200, via_news.text
     assert via_news.content == via_free.content
     assert via_news.content[:4] == b"FPS6"
+
+
+# ADR-0002 退役的 10 条固定 raw/preview 路由
+# （每日精选/旧称新闻/自由模块/天气/置顶显示 × raw/preview；与 test_webui 的
+#  _FIXED_ROUTES 同一张表——服务端删路由，前端零引用）
+_RETIRED_FIXED_ROUTES = [
+    "/api/images/daily/raw", "/api/images/daily/preview",
+    "/api/images/news/raw", "/api/images/news/preview",
+    "/api/images/free/raw", "/api/images/free/preview",
+    "/api/images/weather/raw", "/api/images/weather/preview",
+    "/api/images/display/raw", "/api/images/display/preview",
+]
+
+
+def test_fixed_raw_preview_routes_retired_404(monkeypatch):
+    """固定 raw/preview 路由退役（T7 #17，ADR-0002）：十条全部 404。
+
+    各源内容照常可达——统一走 /{id}/raw|preview 泛化路由（内容源注册表
+    分发）；news- 前缀的旧固件兜底保留在泛化路由（见上一用例）。先备齐
+    各源当前内容（未退役前这些路由返回 200，退役后与状态无关恒 404）。
+    """
+    r = client.post("/api/images/upload",
+                    files={"file": ("retire.png", _png_bytes(color=(60, 60, 200)), "image/png")})
+    assert r.status_code == 200, r.text          # 每日精选可渲染
+    _mock_weather(monkeypatch)                    # 天气卡片可渲染
+    _mock_free_degrade(monkeypatch)               # 自由模块可渲染（降级文字卡）
+    _clear_display()
+    r = client.post("/api/images/display/upload",
+                    files={"file": ("retire_disp.png", _png_bytes(1600, 1200), "image/png")})
+    assert r.status_code == 200, r.text           # 置顶显示有当前内容
+
+    for path in _RETIRED_FIXED_ROUTES:
+        assert client.get(path).status_code == 404, path
+
+    _clear_display()
 
 
 def test_preview_raw_fps6_no_original_404():

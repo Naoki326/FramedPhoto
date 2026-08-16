@@ -39,10 +39,9 @@ def current_meta() -> dict | None:
 
     帧头解读统一走 parse_fps6（内部自检口径，不校验尺寸）：
     DISPLAY_FILE 损坏不可解析时视同无置顶显示（回落时段自动内容）。
-    url/preview_url 指向既有固定端点，仅作为置顶上传端点的返回字段
-    （固定路由退役前不变）；内容清单与「当前显示」查询不消费本函数的
-    url——改走源 meta() + 路由层 helper 统一为 /{id}/raw|preview 形态
-    （T5 #15，ADR-0002）。
+    不含 url/preview_url——源不负责 url（ADR-0002），清单与「当前显示」
+    的 url 由路由层 helper _item_urls 统一组装为 /{id}/raw|preview 形态
+    （固定 /display/raw|preview 路由已退役，T7 #17）。
     """
     if not DISPLAY_FILE.exists():
         return None
@@ -65,8 +64,6 @@ def current_meta() -> dict | None:
         "landscape": 1 if m.get("landscape") else 0,
         "width": prepared.width,
         "height": prepared.height,
-        "url": "/api/images/display/raw",
-        "preview_url": "/api/images/display/preview",
         "has_orig": bool(m.get("has_orig")),
     }
 
@@ -168,10 +165,7 @@ class DisplaySource:
 
         清单字段不含 url/preview_url（源不负责 url，见 ADR-0002）。
         """
-        m = current_meta()
-        if not m:
-            return None
-        return {k: v for k, v in m.items() if k not in ("url", "preview_url")}
+        return current_meta()
 
     def render(self, content_id: str) -> bytes | None:
         """当前置顶显示的 FPS6 帧；无则 None（路由层 404）。"""

@@ -7,11 +7,22 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/images/content` | 内容清单（`images[0]` 为当前应显示图片，附 `url`） |
-| GET | `/api/images/{id}/raw` | 下载 FPS6 设备格式（1200x1600，4bit 双 IC 布局） |
+| GET | `/api/images/{id}/raw` | **正式设备下载契约**：下载 FPS6 设备格式（1200x1600，4bit 双 IC 布局），见下文 |
 | POST | `/api/devices/register` | 设备注册：`{"device_id" 或 "mac", "name"}` |
 | POST | `/api/devices/{id}/heartbeat` | 心跳：`{"firmware_version","battery","current_image","ip"}` |
 | GET | `/api/ota/manifest?current_version=` | OTA 轮询：返回 `detail`（新固件）或 `null` |
 | GET | `/api/ota/download` | 下载最新固件 bin |
+
+### 设备下载契约：`GET /api/images/{id}/raw`
+
+这是唯一的设备下载端点（ADR-0002）：内容清单与「推送到显示」的 `url`
+一律指向它。服务端按 id 前缀分发到五种内容源——`display-`（置顶显示）、
+`daily-`（每日精选）、`weather-`（天气卡片）、`free-`（自由模块；`news-`
+为旧称前缀，旧固件按 id 拼 URL 的兑底仍命中同一内容）；无前缀 id 为
+内容库图片。生成源的 id 是渲染字节的内容指纹（变更检测用，不是查找
+键）：同一时段内指纹不变即内容未变，设备不必重复下载；服务端一律
+返回当前内容，不按指纹寻址。历史的 `/api/images/{source}/raw|preview`
+固定路由已移除。
 
 内容清单响应示例：
 
@@ -36,7 +47,7 @@
 | --- | --- | --- |
 | POST | `/api/images/upload` | 上传图片（multipart `file`，可选 `dither`），自动转换 |
 | GET | `/api/images` | 图片列表 |
-| GET | `/api/images/{id}/preview` | PNG 预览 |
+| GET | `/api/images/{id}/preview` | 内容预览（五源共用：原图缩放 ~800px JPEG，缺原图 404，ADR-0001） |
 | DELETE | `/api/images/{id}` | 删除图片 |
 | GET | `/api/devices` | 设备列表（在线状态按 last_seen 判断） |
 | POST | `/api/ota/upload` | 发布固件：multipart `file` + `version`（校验 0xE9 魔数） |

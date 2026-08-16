@@ -3,7 +3,9 @@ images.py — 图片上传 / 转换 / 内容管理（SQLite 持久化）。
 
 - POST /upload       上传原始图片，转换并保存 FPS6 设备格式
 - GET  ""            图片列表（Web 管理用）
-- GET  /{id}/raw     FPS6 二进制（设备下载，五源经内容源注册表分发）
+- GET  /{id}/raw     FPS6 二进制——唯一设备下载契约（五源经内容源注册表
+                     分发，ADR-0002；旧固定 raw/preview 路由已退役
+                     （T7 #17），news- 前缀的旧固件兜底保留在前缀分发）
 - GET  /{id}/preview 内容预览（五源共用：原图缩放 ~800px JPEG，缺原图 404）
 - DELETE /{id}       删除图片
 - GET  /content      内容清单（设备轮询，取最新一张）
@@ -157,16 +159,6 @@ async def delete_local_after_nas(img_id: str):
     return {"ok": True, "deleted": img_id, "nas_path": meta["nas_path"]}
 
 
-@router.get("/daily/raw")
-async def get_daily_raw():
-    """每日精选 FPS6（优先于手动上传内容时设备拉取）。"""
-    if not daily.daily_fps6_exists():
-        daily.render_daily()
-    if not daily.daily_fps6_exists():
-        raise HTTPException(404, "no daily photo")
-    return Response(content=daily.DAILY_FILE.read_bytes(), media_type="application/octet-stream")
-
-
 @router.get("/daily/selected")
 async def daily_selected():
     """当前手动指定的今日照片（无则 null）。"""
@@ -208,31 +200,6 @@ async def daily_unselect():
     return {"ok": True}
 
 
-@router.get("/daily/preview")
-async def get_daily_preview():
-    """每日精选预览：原图缩略图（省流量）。预览永远由原图缩放
-    而来（ADR-0001）：原图缺失/不可读 → 404，不做帧还原兜底；
-    原图失效由次日选片的既有重选逻辑自然处理。
-    """
-    meta = daily.ensure_daily()
-    if not meta:
-        raise HTTPException(404, "no daily photo")
-    path = meta.get("path")
-    try:
-        if path and Path(path).is_file():
-            return Response(content=make_thumbnail(Path(path).read_bytes()),
-                            media_type="image/jpeg")
-    except Exception:
-        pass
-    raise HTTPException(404, "daily photo original missing")
-
-
-@router.get("/news/raw")
-async def get_news_raw():
-    """兼容旧地址：转发到自由模块（原新闻卡片）。"""
-    return await get_free_raw()
-
-
 def _free_module(module: str | None) -> str | None:
     """自由模块渲染的固定模块：优先 URL 参数；否则取当前时段的固定模块
     （与 /content 一致，保证 raw/preview 渲染的图和 content 返回的一致）。"""
@@ -245,80 +212,21 @@ def _free_module(module: str | None) -> str | None:
     return None
 
 
-@router.get("/free/raw")
-async def get_free_raw(refresh: bool = False, module: str | None = None):
-    from app.free_module import render_free_fps6
-    data = render_free_fps6(refresh=refresh, module_name=_free_module(module))
-    if not data:
-        raise HTTPException(503, "free module unavailable")
-    return Response(content=data, media_type="application/octet-stream")
-
-
 @router.post("/free/regenerate")
 async def free_regenerate():
-    """重新生成今日自由模块（管理台「✨ 重新生成」按钮，ADR-0002）。
+    """重新生成今日自由模块（管理台重生成按钮，ADR-0002）。
 
-    与既有 GET /free/raw 的 refresh 参数同一条生成路径（跳过缓存强制
-    重生成，选模块与 /content 一致，经 _free_module）；成功返回新卡片
-    的清单条目（url/preview_url 由统一 helper _item_urls 组装为
-    /api/images/{id}/raw|preview 形态），自由模块不可用 → 503（与
-    refresh 参数的失败语义一致）。管理台迁至此独立端点后，固定路由
-    退役（T7 #17）不再需要保留 refresh 参数语义。"""
+    与设备下载同一条生成路径：render_free_fps6(refresh=True) 跳过缓存
+    强制重生成，选模块与 /content 一致（经 _free_module）；成功返回新
+    卡片的清单条目（url/preview_url 由统一 helper _item_urls 组装为
+    /api/images/{id}/raw|preview 形态），自由模块不可用 → 503（沿用固定
+    路由时代 refresh 参数的失败语义；T7 #17 后本端点是唯一重生成入口）。"""
     from app.free_module import SOURCE, render_free_fps6
     data = render_free_fps6(refresh=True, module_name=_free_module(None))
     if not data:
         raise HTTPException(503, "free module unavailable")
     item = SOURCE.meta()
     return {"ok": True, "item": _item_urls(item) if item else None}
-
-
-@router.get("/news/preview")
-async def get_news_preview():
-    """兼容旧地址：转发到自由模块预览。"""
-    return await get_free_preview()
-
-
-@router.get("/free/preview")
-async def get_free_preview(module: str | None = None):
-    """自由模块预览：当前卡片原图缩略图（量化前，省流量）。
-
-    原图获取只认自由模块自己落库的卡片（记录当前卡片的库 id，T4 #14），
-    不再全上传目录按 mtime 猜最新——内容库新增上传后预览不会再错换成
-    那张照片。预览永远由原图缩放而来（ADR-0001）：无当前卡片 / 入库
-    失败 / 原图缺失 → 404，不做帧还原兑底。module 参数仅为维持端点
-    形状保留（与渲染同选法，见 free_module.current_module）。
-    """
-    from app.free_module import current_original
-    orig = current_original()
-    if not orig:
-        raise HTTPException(404, "free card original missing")
-    return Response(content=make_thumbnail(orig, max_side=800),
-                    media_type="image/jpeg")
-
-
-@router.get("/weather/raw")
-async def get_weather_raw():
-    from app.weather_card import render_weather_card
-    data = render_weather_card()
-    if not data:
-        raise HTTPException(503, "weather unavailable")
-    return Response(content=data, media_type="application/octet-stream")
-
-
-@router.get("/weather/preview")
-async def get_weather_preview():
-    """天气卡片预览：先按既有缓存节奏渲染，再读同 stem 原图返回缩略。
-
-    预览永远由原图缩放而来（ADR-0001）：渲染不可用 → 503；
-    原图缺失（如旧缓存无原图）→ 404，不做帧还原兜底。
-    """
-    from app import weather_card
-    if not weather_card.render_weather_card():
-        raise HTTPException(503, "weather unavailable")
-    png = weather_card.weather_original_png()
-    if not png:
-        raise HTTPException(404, "weather original missing")
-    return Response(content=make_thumbnail(png, max_side=800), media_type="image/jpeg")
 
 
 # ---------- 临时显示（一次性上传切换，不保存到照片库 / 不入库分析） ----------
@@ -387,29 +295,6 @@ async def display_current():
     if meta:
         return {"displaying": "manual", "item": _item_urls(meta)}
     return {"displaying": "auto", "item": None}
-
-
-@router.get("/display/raw")
-async def display_raw():
-    data = display.read_frame()
-    if not data:
-        raise HTTPException(404, "no display image")
-    return Response(content=data, media_type="application/octet-stream")
-
-
-@router.get("/display/preview")
-async def display_preview():
-    """当前显示预览：有原图缩略图则返回原图（量化前，省流量）。
-
-    预览永远由原图而来（ADR-0001）：无原图（如直推的外部 FPS6 /
-    校准图，本就无原图）→ 404，不做帧还原兜底。
-    """
-    if display.read_frame() is None:
-        raise HTTPException(404, "no display image")
-    data = display.read_original_thumbnail()
-    if data is not None:
-        return Response(content=data, media_type="image/jpeg")
-    raise HTTPException(404, "display original missing")
 
 
 @router.delete("/display/current")
