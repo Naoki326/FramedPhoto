@@ -29,11 +29,10 @@
 #include "content_client.h"
 #include "ota_client.h"
 #include "display.h"
+#include "fps6_format.h"
 
 static const char *TAG = "display";
 
-#define FPS6_HEADER_SIZE 20
-#define FPS6_IMAGE_SIZE  (960000 + FPS6_HEADER_SIZE)   /* 1200x1600 4bit + 头 */
 #define STORAGE_ERASE_SIZE 0x100000                     /* 1MB，4KB 对齐，覆盖整图 */
 #define DEMO_ONCE 1
 

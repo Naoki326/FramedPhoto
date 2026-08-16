@@ -12,6 +12,7 @@
 #include "esp_http_client.h"
 #include "cJSON.h"
 #include "content_client.h"
+#include "fps6_format.h"
 
 static const char *TAG = "content";
 
@@ -201,8 +202,8 @@ esp_err_t content_download_image(const char *url, const esp_partition_t *part)
         return ctx.err;
     }
 
-    /* 校验文件大小（FPS6 数据区 = 960000B + 20B 头） */
-    if (ctx.written < 960000 + 20) {
+    /* 校验文件大小（整帧 = 头 20B + 数据区 960000B，常量见 fps6_format.h） */
+    if (ctx.written < FPS6_FRAME_SIZE) {
         ESP_LOGE(TAG, "file too small: %u", (unsigned)ctx.written);
         return ESP_ERR_INVALID_SIZE;
     }
