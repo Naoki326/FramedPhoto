@@ -624,3 +624,63 @@ def render_free_slot(module_name: str | None = None) -> dict | None:
         "url": "/api/images/free/raw",
         "preview_url": "/api/images/free/preview",
     }
+
+
+# ═══════════════════════ 内容源适配器（ADR-0002） ═══════════════════════
+
+def current_module() -> str | None:
+    """当前时段固定配置的自由模块（与 /content 的选法一致；非 free 时段返回 None）。"""
+    from app import slots
+    seg = slots.current_segment()
+    if seg and seg.get("type") == slots.SLOT_FREE:
+        return seg.get("module")
+    return None
+
+
+class FreeSource:
+    """自由模块内容源：free- 前缀的渲染命名空间；news- 为旧称第二前缀。
+
+    id 是当前卡片渲染字节的内容指纹（设备变更检测用），不是查找键。
+    清单字段不含 url/preview_url（源不负责 url，见 ADR-0002）。
+    """
+
+    id_prefix = "free-"
+    missing_detail = "no free module card"
+
+    def meta(self) -> dict | None:
+        """确保当前卡片已生成，返回内容清单字段；不可用返回 None。"""
+        m = render_free_slot(module_name=current_module())
+        if not m:
+            return None
+        return {
+            "id": m["id"],
+            "filename": m.get("filename", ""),
+            "caption": m.get("caption", ""),
+            "date": m.get("date", ""),
+            "memory_score": None,
+            "width": m["width"],
+            "height": m["height"],
+            "landscape": 1,   # 卡片横屏
+        }
+
+    def render(self, content_id: str) -> bytes | None:
+        """当前卡片的 FPS6 帧（与 /content 同一选模块逻辑）；不可用返回 None。"""
+        return render_free_fps6(module_name=current_module())
+
+    def original(self, content_id: str) -> bytes | None:
+        """当前卡片原图（加文字后的完整卡片 PNG）字节；缺失返回 None。
+
+        现行选法与 /free/preview 一致：uploads 下按 mtime 最新 .orig。
+        收紧为「只认自由模块自己落库的卡片」由预览泛化改造承接（epic #10）。
+        """
+        try:
+            up = Path(settings.upload_dir)
+            origs = sorted(up.glob("*.orig"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if origs:
+                return origs[0].read_bytes()
+        except OSError:
+            pass
+        return None
+
+
+SOURCE = FreeSource()

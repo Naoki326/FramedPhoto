@@ -691,3 +691,83 @@ def test_calibration_generate_validates_frame(monkeypatch):
     assert r.status_code == 200, r.text
     assert images_router.DISPLAY_FILE.read_bytes() == good
     _clear_display()
+
+
+# ---------- 内容源注册表改道（T2 #12：三源经注册表分发，raw 字节与固定路由一致） ----------
+
+def _set_single_slot(slot_type: str) -> None:
+    """固定全天时段为单一类型（runtime_config 白名单路径，与 /content 同源）。"""
+    from app import runtime_config
+    runtime_config.save({"slot_segments": [{"start": "00:00", "type": slot_type}]})
+
+
+# (源前缀, 时段类型, 对应固定 raw 路由)
+_SOURCE_CASES = [
+    ("daily", "photo", "/api/images/daily/raw"),
+    ("weather", "weather", "/api/images/weather/raw"),
+    ("free", "free", "/api/images/free/raw"),
+]
+
+
+def _prepare_source(monkeypatch, prefix: str) -> None:
+    """按既有流程（上传图片 / 桩外部依赖 / 时段配置）让该源产出「当前有效 id」。"""
+    if prefix == "daily":
+        _set_single_slot("photo")
+        r = client.post("/api/images/upload",
+                        files={"file": ("contract.png", _png_bytes(color=(30, 90, 200)), "image/png")})
+        assert r.status_code == 200, r.text
+    elif prefix == "weather":
+        _mock_weather(monkeypatch)
+        _set_single_slot("weather")
+    else:
+        _mock_free_degrade(monkeypatch)
+        _set_single_slot("free")
+
+
+@pytest.mark.parametrize("prefix,slot_type,fixed_raw_url", _SOURCE_CASES)
+def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, slot_type, fixed_raw_url):
+    """参数化契约测试雏形（T2 #12）：三源跑两断言。
+
+    改道是双轨行为零变化：本用例先把契约钉在 HTTP seam 上，
+    改道（/{id}/raw 前缀分发查注册表）前后都必须绿。
+    1. 前缀分发命中：内容指纹 id 经 /{id}/raw 返回 200（不落入内容库 404），
+       且字节与对应固定路由完全一致；
+    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过。
+    """
+    from app.epd_image import parse_fps6
+    _prepare_source(monkeypatch, prefix)
+
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    images = r.json()["images"]
+    assert images, f"{prefix} 源应有当前内容"
+    content_id = images[0]["id"]
+    assert content_id.startswith(prefix + "-"), content_id
+
+    dispatched = client.get(f"/api/images/{content_id}/raw")
+    assert dispatched.status_code == 200, dispatched.text
+    assert dispatched.headers["content-type"] == "application/octet-stream"
+    fixed = client.get(fixed_raw_url)
+    assert fixed.status_code == 200, fixed.text
+    assert dispatched.content == fixed.content
+
+    prepared = parse_fps6(dispatched.content)
+    assert (prepared.width, prepared.height) == (1200, 1600)
+
+
+def test_news_prefix_alias_hits_free_source(monkeypatch):
+    """news- 旧前缀命中自由模块（第二前缀）：同一时刻 news-* 与 free-* 的 raw 字节一致。"""
+    _mock_free_degrade(monkeypatch)
+    _set_single_slot("free")
+
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    free_id = r.json()["images"][0]["id"]
+    assert free_id.startswith("free-"), free_id
+
+    via_free = client.get(f"/api/images/{free_id}/raw")
+    via_news = client.get(f"/api/images/news-{free_id[len('free-'):]}/raw")
+    assert via_free.status_code == 200, via_free.text
+    assert via_news.status_code == 200, via_news.text
+    assert via_news.content == via_free.content
+    assert via_news.content[:4] == b"FPS6"

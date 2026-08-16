@@ -22,7 +22,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image, ImageOps
 
-from app import db, daily, nas_sync
+from app import content_sources, db, daily, nas_sync
 from app.config import settings
 from app.epd_image import (
     is_landscape,
@@ -483,29 +483,18 @@ async def display_clear():
 async def get_raw(img_id: str):
     if img_id.startswith("display-"):
         # 内容指纹型 display id：设备按 id 拼 URL 下载，转发到临时显示图
+        # （display 源适配器待后续改造搬入注册表，双轨期保持原分支）
         if not DISPLAY_FILE.exists():
             raise HTTPException(404, "no display image")
         return Response(content=DISPLAY_FILE.read_bytes(),
                         media_type="application/octet-stream")
-    if img_id.startswith("daily-"):
-        # 内容指纹型 daily id：设备按 id 拼 URL 下载，转发到每日精选
-        if not daily.daily_fps6_exists():
-            daily.render_daily()
-        if not daily.daily_fps6_exists():
-            raise HTTPException(404, "no daily photo")
-        return Response(content=daily.DAILY_FILE.read_bytes(),
-                        media_type="application/octet-stream")
-    if img_id.startswith("news-") or img_id.startswith("free-"):
-        from app.free_module import render_free_fps6
-        data = render_free_fps6(module_name=_free_module(None))
+    # 内容源注册表分发（ADR-0002）：daily-/weather-/free-/news- 前缀 → 源，
+    # 源服务「当前内容」（id 仅是内容指纹，不作查找键）
+    source = content_sources.resolve(img_id)
+    if source:
+        data = source.render(img_id)
         if not data:
-            raise HTTPException(404, "no free module card")
-        return Response(content=data, media_type="application/octet-stream")
-    if img_id.startswith("weather-"):
-        from app.weather_card import render_weather_card
-        data = render_weather_card()
-        if not data:
-            raise HTTPException(404, "no weather card")
+            raise HTTPException(404, source.missing_detail)
         return Response(content=data, media_type="application/octet-stream")
     meta = _get_or_404(img_id)
     data = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()

@@ -751,3 +751,43 @@ def render_weather_slot() -> dict | None:
         "url": "/api/images/weather/raw",
         "preview_url": "/api/images/weather/preview",
     }
+
+
+# ═══════════════════════ 内容源适配器（ADR-0002） ═══════════════════════
+
+class WeatherSource:
+    """天气卡片内容源：weather- 前缀的渲染命名空间（当前内容 = 当日卡片）。
+
+    id 是当日渲染帧的内容指纹（设备变更检测用），不是查找键。
+    清单字段不含 url/preview_url（源不负责 url，见 ADR-0002）。
+    """
+
+    id_prefix = "weather-"
+    missing_detail = "no weather card"
+
+    def meta(self) -> dict | None:
+        """确保当日卡片已渲染，返回内容清单字段；不可用返回 None。"""
+        m = render_weather_slot()
+        if not m:
+            return None
+        return {
+            "id": m["id"],
+            "filename": m.get("filename", ""),
+            "caption": m.get("caption", ""),
+            "date": m.get("date", ""),
+            "memory_score": None,
+            "width": m["width"],
+            "height": m["height"],
+            "landscape": 1,   # 卡片横屏
+        }
+
+    def render(self, content_id: str) -> bytes | None:
+        """当日天气卡片的 FPS6 帧（当日缓存 + 1 小时数据刷新）；不可用返回 None。"""
+        return render_weather_card()
+
+    def original(self, content_id: str) -> bytes | None:
+        """当日卡片原图（横屏视角彩色 PNG）字节；未渲染/缺失返回 None。"""
+        return weather_original_png()
+
+
+SOURCE = WeatherSource()

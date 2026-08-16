@@ -196,3 +196,53 @@ def ensure_daily() -> dict | None:
 
 def daily_fps6_exists() -> bool:
     return DAILY_FILE.exists()
+
+
+# ═══════════════════════ 内容源适配器（ADR-0002） ═══════════════════════
+
+class DailySource:
+    """每日精选内容源：daily- 前缀的渲染命名空间。
+
+    id 是当日渲染帧的内容指纹（设备变更检测用），不是查找键：
+    meta/render/original 一律服务「当前内容」（当日精选）。
+    """
+
+    id_prefix = "daily-"
+    missing_detail = "no daily photo"
+
+    def meta(self) -> dict | None:
+        """确保当日精选已生成，返回内容清单字段；无可用照片返回 None。"""
+        m = ensure_daily()
+        if not m:
+            return None
+        return {
+            "id": m.get("id", "daily"),
+            "filename": m.get("filename", ""),
+            "caption": m.get("caption", ""),
+            "date": m.get("date", ""),
+            "memory_score": m.get("memory_score"),
+            "width": m["width"],
+            "height": m["height"],
+            "landscape": m.get("landscape") or 0,
+        }
+
+    def render(self, content_id: str) -> bytes | None:
+        """当日精选的 FPS6 帧（必要时渲染；无可用照片返回 None）。"""
+        if not daily_fps6_exists():
+            render_daily()
+        if not daily_fps6_exists():
+            return None
+        return DAILY_FILE.read_bytes()
+
+    def original(self, content_id: str) -> bytes | None:
+        """当日精选原图（选中照片的原始文件字节）；缺失返回 None。"""
+        path = (ensure_daily() or {}).get("path")
+        if path and Path(path).is_file():
+            try:
+                return Path(path).read_bytes()
+            except OSError:
+                return None
+        return None
+
+
+SOURCE = DailySource()
