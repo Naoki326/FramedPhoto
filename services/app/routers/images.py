@@ -254,6 +254,24 @@ async def get_free_raw(refresh: bool = False, module: str | None = None):
     return Response(content=data, media_type="application/octet-stream")
 
 
+@router.post("/free/regenerate")
+async def free_regenerate():
+    """重新生成今日自由模块（管理台「✨ 重新生成」按钮，ADR-0002）。
+
+    与既有 GET /free/raw 的 refresh 参数同一条生成路径（跳过缓存强制
+    重生成，选模块与 /content 一致，经 _free_module）；成功返回新卡片
+    的清单条目（url/preview_url 由统一 helper _item_urls 组装为
+    /api/images/{id}/raw|preview 形态），自由模块不可用 → 503（与
+    refresh 参数的失败语义一致）。管理台迁至此独立端点后，固定路由
+    退役（T7 #17）不再需要保留 refresh 参数语义。"""
+    from app.free_module import SOURCE, render_free_fps6
+    data = render_free_fps6(refresh=True, module_name=_free_module(None))
+    if not data:
+        raise HTTPException(503, "free module unavailable")
+    item = SOURCE.meta()
+    return {"ok": True, "item": _item_urls(item) if item else None}
+
+
 @router.get("/news/preview")
 async def get_news_preview():
     """兼容旧地址：转发到自由模块预览。"""

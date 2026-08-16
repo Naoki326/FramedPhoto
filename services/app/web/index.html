@@ -456,8 +456,7 @@ async function clearDisplay() {
 async function refreshFree() {
   const btn = $('freeRefreshBtn'); btn.disabled = true; btn.textContent = '生成中…（约 1-2 分钟）';
   try {
-    const r = await fetch('/api/images/free/raw?refresh=1');
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    await api('/images/free/regenerate', { method: 'POST' });
     toast('已重新生成今日自由模块');
     loadDisplay();
   } catch (e) { toast('生成失败: ' + e.message); }
@@ -479,7 +478,7 @@ async function loadDaily() {
     const m = images[0];
     box.innerHTML = `
       <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <img src="/api/images/daily/preview" style="width:200px;height:200px;object-fit:contain;border-radius:8px;background:#eee">
+        <img src="${m.preview_url}" style="width:200px;height:200px;object-fit:contain;border-radius:8px;background:#eee">
         <div style="font-size:13px;line-height:1.9">
           <div><b>${m.filename || ''}</b></div>
           <div>📅 ${m.date || '—'} · 回忆度 ${m.memory_score ?? '—'}</div>

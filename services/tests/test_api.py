@@ -508,6 +508,57 @@ def test_free_preview_stays_own_card_after_new_upload(monkeypatch):
     assert_own_card(f"/api/images/{free_id}/preview")
 
 
+def test_free_regenerate_endpoint(monkeypatch):
+    """POST /free/regenerate（T6 #16）：与既有 GET /free/raw 的 refresh 参数
+    同一条生成路径。
+
+    已有当日内缓存时 POST 仍强制重生成（换一份 LLM 内容 → 内容指纹变化）；
+    返回新卡片的清单条目，url/preview_url 为 /api/images/{id}/raw|preview
+    形态且 url 实际可下载为合法 FPS6；内容清单与新条目一致。
+    """
+    fm = _mock_free_degrade(monkeypatch)
+    _set_single_slot("free")
+
+    # 先生成当日卡片（无 refresh：建立当日内缓存）
+    r = client.get("/api/images/free/raw")
+    assert r.status_code == 200, r.text
+    r = client.get("/api/images/content")
+    id_before = r.json()["images"][0]["id"]
+    assert id_before.startswith("free-"), id_before
+
+    # 换一份 LLM 内容后 POST 重生成：跳过缓存、走同一生成路径 → 新指纹
+    monkeypatch.setattr(fm, "_llm_content",
+                        lambda module, today: {"title": "重生成测试卡", "body": "第二张卡片",
+                                               "image_prompt": ""})
+    r = client.post("/api/images/free/regenerate")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    item = body["item"]
+    assert item["id"].startswith("free-"), item
+    assert item["url"] == f"/api/images/{item['id']}/raw"
+    assert item["preview_url"] == f"/api/images/{item['id']}/preview"
+
+    dl = client.get(item["url"])
+    assert dl.status_code == 200, dl.text
+    assert dl.headers["content-type"] == "application/octet-stream"
+    assert dl.content[:4] == b"FPS6"
+
+    # 清单条目与重生成结果一致，且确实重新生成（指纹变化）
+    r = client.get("/api/images/content")
+    assert r.json()["images"][0]["id"] == item["id"]
+    assert item["id"] != id_before
+
+
+def test_free_regenerate_503_when_free_disabled():
+    """自由模块停用时 POST /free/regenerate → 503，与旧 refresh 参数失败语义一致。"""
+    r = client.put("/api/settings", json={"free_enabled": False})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/images/free/regenerate")
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == "free module unavailable"
+
+
 # ---------- 每日精选 / 内容库预览与缩略图（T4 #4：删帧还原回退） ----------
 
 def _fake_daily_meta(path: str) -> dict:
