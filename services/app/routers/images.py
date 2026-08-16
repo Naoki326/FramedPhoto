@@ -26,11 +26,9 @@ from PIL import Image, ImageOps
 from app import db, daily, nas_sync
 from app.config import settings
 from app.epd_image import (
-    HEADER_SIZE,
     PreparedImage,
     is_landscape,
     prepare_image,
-    preview_png,
     preview_png_landscape,
 )
 
@@ -215,22 +213,21 @@ async def daily_unselect():
 
 @router.get("/daily/preview")
 async def get_daily_preview():
-    """每日精选预览：显示量化前原图缩略图（省流量）；原图缺失时回退 FPS6 渲染。"""
+    """每日精选预览：原图缩略图（省流量）。预览永远由原图缩放
+    而来（ADR-0001）：原图缺失/不可读 → 404，不做帧还原兜底；
+    原图失效由次日选片的既有重选逻辑自然处理。
+    """
     meta = daily.ensure_daily()
     if not meta:
         raise HTTPException(404, "no daily photo")
     path = meta.get("path")
-    if path and Path(path).exists():
-        try:
-            thumb = _make_thumbnail(Path(path).read_bytes())
-            return Response(content=thumb, media_type="image/jpeg")
-        except Exception:
-            pass
-    raw = daily.DAILY_FILE.read_bytes()
-    w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw)
-    return Response(content=preview_png_landscape(prepared, bool(meta.get("landscape"))),
-                    media_type="image/png")
+    try:
+        if path and Path(path).is_file():
+            return Response(content=_make_thumbnail(Path(path).read_bytes()),
+                            media_type="image/jpeg")
+    except Exception:
+        pass
+    raise HTTPException(404, "daily photo original missing")
 
 
 @router.get("/news/raw")
@@ -495,8 +492,10 @@ async def get_raw(img_id: str):
 
 @router.get("/{img_id}/preview")
 async def get_preview(img_id: str):
-    meta = _get_or_404(img_id)
-    # 优先显示全彩原图（orig）；探测 PNG/JPEG，其他格式退回设备格式预览
+    """内容库图片预览：返回原图原样字节（探测 PNG/JPEG 定 Content-Type）。
+    预览永远由原图而来（ADR-0001）：原图缺失 → 404，不做帧还原兜底。
+    """
+    _get_or_404(img_id)
     orig = UPLOAD_DIR / f"{img_id}.orig"
     if orig.exists():
         head = orig.read_bytes()[:12]
@@ -504,11 +503,7 @@ async def get_preview(img_id: str):
             return Response(content=orig.read_bytes(), media_type="image/png")
         if head[:3] == b"\xff\xd8\xff":
             return Response(content=orig.read_bytes(), media_type="image/jpeg")
-    raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
-    w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw)
-    return Response(content=preview_png_landscape(prepared, bool(meta.get("landscape"))),
-                    media_type="image/png")
+    raise HTTPException(404, "image original missing")
 
 
 THUMB_WIDTH = 400  # 内容库缩略图宽度（省流量）
@@ -516,20 +511,17 @@ THUMB_WIDTH = 400  # 内容库缩略图宽度（省流量）
 
 @router.get("/{img_id}/thumb")
 async def get_thumb(img_id: str):
-    """内容库缩略图：原图缩放为 ~400px 宽 JPEG，磁盘缓存，省流量。"""
+    """内容库缩略图：原图缩放为 ~400px 宽 JPEG，磁盘缓存，省流量。
+    缩略缓存或原图可用 → 200；均不可用 → 404，不做帧还原兜底（ADR-0001）。
+    """
     _get_or_404(img_id)
     thumb = UPLOAD_DIR / f"{img_id}.thumb.jpg"
     if thumb.exists():
         return Response(content=thumb.read_bytes(), media_type="image/jpeg")
     orig = UPLOAD_DIR / f"{img_id}.orig"
-    if orig.exists():
-        img = Image.open(io.BytesIO(orig.read_bytes()))
-    else:
-        meta = db.get_image(img_id)
-        raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
-        w, h = struct.unpack_from("<II", raw, 4)
-        prepared = PreparedImage(width=w, height=h, data=raw)
-        img = Image.open(io.BytesIO(preview_png_landscape(prepared, bool(meta.get("landscape")))))
+    if not orig.exists():
+        raise HTTPException(404, "image original missing")
+    img = Image.open(io.BytesIO(orig.read_bytes()))
     img = img.convert("RGB")
     w, h = img.size
     if w > THUMB_WIDTH:

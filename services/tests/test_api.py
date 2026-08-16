@@ -463,3 +463,110 @@ def test_free_preview_404_without_original(monkeypatch, tmp_path):
     r = client.get("/api/images/free/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
+
+
+# ---------- 每日精选 / 内容库预览与缩略图（T4 #4：删帧还原回退） ----------
+
+def _fake_daily_meta(path: str) -> dict:
+    """构造 ensure_daily() 返回形状的原图元数据，指向给定路径。"""
+    return {
+        "id": "daily-test",
+        "path": path,
+        "filename": "photo.png",
+        "caption": "",
+        "date": "",
+        "memory_score": None,
+        "width": 1200,
+        "height": 1600,
+        "landscape": 0,
+    }
+
+
+def test_daily_preview_200_from_original(monkeypatch, tmp_path):
+    """每日精选预览 200：内容来自原图（品红不在 6 色板，非帧还原）。"""
+    from app import daily
+    photo = tmp_path / "daily_orig.png"
+    photo.write_bytes(_png_bytes(1200, 1600, _UNIQUE_RGB))
+    monkeypatch.setattr(daily, "ensure_daily", lambda: _fake_daily_meta(str(photo)))
+
+    r = client.get("/api/images/daily/preview")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+
+
+def test_daily_preview_404_without_original(monkeypatch, tmp_path):
+    """每日精选原图失效 → 404；当日帧文件仍在也不得帧还原（否则会 200 PNG）。"""
+    from app import daily
+    from app.epd_image import prepare_image
+    daily.DAILY_DIR.mkdir(parents=True, exist_ok=True)
+    daily.DAILY_FILE.write_bytes(prepare_image(_png_bytes()).data)  # 当日已渲染的帧
+    monkeypatch.setattr(daily, "ensure_daily",
+                        lambda: _fake_daily_meta(str(tmp_path / "gone.png")))
+
+    r = client.get("/api/images/daily/preview")
+    assert r.status_code == 404, r.text
+    assert "original" in r.json()["detail"]
+
+
+def test_library_preview_serves_original_bytes():
+    """内容库预览 200：返回原图原样字节（品红 PNG，帧还原不可能产出同一文件）。"""
+    png = _png_bytes(1200, 1600, _UNIQUE_RGB)
+    r = client.post("/api/images/upload", files={"file": ("uniq.png", png, "image/png")})
+    assert r.status_code == 200, r.text
+    img_id = r.json()["id"]
+
+    r = client.get(f"/api/images/{img_id}/preview")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "image/png"
+    assert r.content == png
+
+
+def test_library_preview_404_without_original():
+    """内容库缺原图 → 预览 404；帧仍在也不得帧还原（否则会 200 PNG）。"""
+    from pathlib import Path
+    from app.config import settings
+    r = client.post("/api/images/upload",
+                    files={"file": ("nofb.png", _png_bytes(800, 600), "image/png")})
+    img_id = r.json()["id"]
+    up = Path(settings.upload_dir)
+    (up / f"{img_id}.orig").unlink()
+    assert (up / f"{img_id}.fps6").exists()
+
+    r = client.get(f"/api/images/{img_id}/preview")
+    assert r.status_code == 404, r.text
+    assert "original" in r.json()["detail"]
+
+
+def test_library_thumb_200_jpeg_from_original():
+    """内容库缩略图 200：来自原图缩放（品红色非帧还原），宽度缩到 ~400。"""
+    r = client.post("/api/images/upload",
+                    files={"file": ("t.png", _png_bytes(1600, 1200, _UNIQUE_RGB), "image/png")})
+    img_id = r.json()["id"]
+
+    r = client.get(f"/api/images/{img_id}/thumb")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    assert img.width == 400
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+
+
+def test_library_thumb_404_without_original():
+    """内容库缺原图与缩略缓存 → 缩略图 404；帧仍在也不得帧还原。"""
+    from pathlib import Path
+    from app.config import settings
+    r = client.post("/api/images/upload",
+                    files={"file": ("nofb2.png", _png_bytes(800, 600), "image/png")})
+    img_id = r.json()["id"]
+    up = Path(settings.upload_dir)
+    for suffix in ("orig", "thumb.jpg"):
+        (up / f"{img_id}.{suffix}").unlink(missing_ok=True)
+    assert (up / f"{img_id}.fps6").exists()
+
+    r = client.get(f"/api/images/{img_id}/thumb")
+    assert r.status_code == 404, r.text
+    assert "original" in r.json()["detail"]
