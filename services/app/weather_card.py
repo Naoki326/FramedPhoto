@@ -648,6 +648,43 @@ def _render_card(style: str, data: dict, design: dict) -> Image.Image:
 
 # ═══════════════════════ 对外入口 ═══════════════════════
 
+# 滚动清理保留对数：帧 + 同 stem 原图按对保留最新 CACHE_KEEP 对，更旧的一并删除。
+# 缓存键含日期/风格/location，超过 1 小时即不再命中，保留少量余量仅供重启复用。
+CACHE_KEEP = 8
+
+
+def _prune_weather_cache() -> None:
+    """帧缓存滚动清理：按 mtime 保留最新 CACHE_KEEP 对，更旧的帧与
+    同 stem 原图一并删除（原图与帧同生同灭，不残留孤儿文件）。"""
+    mtimes: dict[str, float] = {}
+    for f in CACHE_DIR.glob("weather_*"):
+        if f.suffix not in (".fps6", ".png"):
+            continue
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            continue
+        mtimes[f.stem] = max(mtimes.get(f.stem, 0.0), mtime)
+    stale = sorted(mtimes.items(), key=lambda kv: kv[1], reverse=True)[CACHE_KEEP:]
+    for stem, _ in stale:
+        for suffix in (".fps6", ".png"):
+            try:
+                (CACHE_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _cache_stem(today: dt.date, style: str, loc_id: str) -> str:
+    """当日缓存文件名 stem：日期 + 风格 + location 指纹（帧与原图共用）。"""
+    return f"weather_{today:%Y%m%d}_{style}_{hashlib.md5(loc_id.encode()).hexdigest()[:6]}"
+
+
+def _current_stem() -> str:
+    """以当前时刻（今日风格 + 当前 location）算出的缓存 stem。"""
+    today = dt.date.today()
+    return _cache_stem(today, pick_style(today), resolve_location()[0])
+
+
 def render_weather_card() -> bytes | None:
     """渲染当日风格天气卡片 → FPS6 字节（当日缓存 + 1 小时数据刷新）。无数据返回 None。
 
@@ -655,24 +692,46 @@ def render_weather_card() -> bytes | None:
     90° 转成 FPS6 竖屏数据——横放相框观看时卡片正立。
     每日 0 点后自动切换风格（缓存文件名含日期+风格）。
     缓存指纹带 location：管理台改了城市后，缓存自动失效立即按新城市渲染。
+    渲染成功时同 stem 落盘原始彩色卡片 PNG（横屏视角）——预览由原图缩放
+    而来（ADR-0001），原图与帧同批滚动清理（见 _prune_weather_cache）。
     """
-    today = dt.date.today()
-    style = pick_style(today)
-    loc_id, _city = resolve_location()
-    cache = CACHE_DIR / f"weather_{today:%Y%m%d}_{style}_{hashlib.md5(loc_id.encode()).hexdigest()[:6]}.fps6"
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    stem = _current_stem()
+    cache = CACHE_DIR / f"{stem}.fps6"
     if cache.exists() and (dt.datetime.now().timestamp() - cache.stat().st_mtime) < 3600:
         return cache.read_bytes()
 
     data = fetch_weather()
     if not data:
         return None
-    design = _daily_design(style, today)
+    style = pick_style()
+    design = _daily_design(style, dt.date.today())
     img = _render_card(style, data, design)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    prepared = prepare_image(buf.getvalue(), dither=True)  # 横图自动旋转为 FPS6 竖屏数据
+    png = buf.getvalue()
+    prepared = prepare_image(png, dither=True)  # 横图自动旋转为 FPS6 竖屏数据
+    # 先落盘原图（尽力而为），再写帧缓存：帧写失败才视为渲染失败
+    try:
+        (CACHE_DIR / f"{stem}.png").write_bytes(png)
+    except OSError:
+        logger.warning("weather original save failed: %s", stem)
     cache.write_bytes(prepared.data)
+    _prune_weather_cache()
     return prepared.data
+
+
+def weather_original_png() -> bytes | None:
+    """当日天气卡片原图（横屏视角彩色 PNG）字节；未渲染/文件缺失返回 None。
+
+    与帧缓存同 stem：render_weather_card() 渲染成功后必存在。
+    预览永远由原图缩放而来（ADR-0001），不从帧还原。
+    """
+    png = CACHE_DIR / f"{_current_stem()}.png"
+    try:
+        return png.read_bytes() or None
+    except OSError:
+        return None
 
 
 def render_weather_slot() -> dict | None:

@@ -88,18 +88,16 @@ def _today_style() -> str:
 
 
 def _clear_weather_cache():
-    """删除天气卡片缓存（数据 + 当日设计），强制下次渲染重新拉取。"""
+    """删除天气卡片缓存（帧 + 同 stem 原图 + 当日设计），
+    强制下次渲染重新拉取。原图与帧同生同灭，不残留孤儿。"""
     from app import weather_card
-    for f in weather_card.CACHE_DIR.glob("weather_*.fps6"):
-        try:
-            f.unlink()
-        except OSError:
-            pass
-    for f in weather_card.CACHE_DIR.glob("design_*.json"):
-        try:
-            f.unlink()
-        except OSError:
-            pass
+    patterns = ("weather_*.fps6", "weather_*.png", "design_*.json")
+    for pattern in patterns:
+        for f in weather_card.CACHE_DIR.glob(pattern):
+            try:
+                f.unlink()
+            except OSError:
+                pass
 
 
 @router.put("")

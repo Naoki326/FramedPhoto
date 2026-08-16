@@ -300,13 +300,18 @@ async def get_weather_raw():
 
 @router.get("/weather/preview")
 async def get_weather_preview():
-    from app.weather_card import render_weather_card
-    data = render_weather_card()
-    if not data:
+    """天气卡片预览：先按既有缓存节奏渲染，再读同 stem 原图返回缩略。
+
+    预览永远由原图缩放而来（ADR-0001）：渲染不可用 → 503；
+    原图缺失（如旧缓存无原图）→ 404，不做帧还原兜底。
+    """
+    from app import weather_card
+    if not weather_card.render_weather_card():
         raise HTTPException(503, "weather unavailable")
-    w, h = struct.unpack_from("<II", data, 4)
-    prepared = PreparedImage(width=w, height=h, data=data)
-    return Response(content=preview_png_landscape(prepared, True), media_type="image/png")
+    png = weather_card.weather_original_png()
+    if not png:
+        raise HTTPException(404, "weather original missing")
+    return Response(content=_make_thumbnail(png, max_side=800), media_type="image/jpeg")
 
 
 # ---------- 临时显示（一次性上传切换，不保存到照片库 / 不入库分析） ----------

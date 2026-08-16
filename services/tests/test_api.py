@@ -299,3 +299,115 @@ def test_esptouch_v2_rejects_bad_key():
         assert False, "should raise"
     except ValueError:
         pass
+
+
+# ---------- 天气卡片（T2 #3：落盘原图，预览改从原图） ----------
+
+# 卡片原图用 6 色板之外的纯色（品红）：若预览/原图含该色，
+# 内容必然来自原图而非 6 色帧还原（帧还原只能产出板内色）。
+_UNIQUE_RGB = (255, 0, 255)
+
+
+def _mock_weather(monkeypatch):
+    """固定天气数据与卡片渲染（无网络 / 无字体 / 无 LLM），返回 weather_card 模块。"""
+    from app import weather_card
+    data = {
+        "now": {"temp": "23", "text": "多云", "icon": "101", "feelsLike": "22",
+                "humidity": "60", "windDir": "东北风", "windScale": "3", "city": "测试市"},
+        "daily": [{"fxDate": "2026-08-16", "textDay": "多云", "tempMin": "20",
+                   "tempMax": "28", "iconDay": "101"}],
+    }
+    monkeypatch.setattr(weather_card, "fetch_weather", lambda: data)
+    monkeypatch.setattr(weather_card, "resolve_location", lambda: ("101010100", "测试市"))
+    monkeypatch.setattr(weather_card, "_daily_design",
+                        lambda style, today: dict(weather_card.DEFAULT_DESIGN))
+    card = Image.new("RGB", (1600, 1200), _UNIQUE_RGB)
+    monkeypatch.setattr(weather_card, "_render_card", lambda style, d, design: card)
+    return weather_card
+
+
+def test_weather_render_writes_same_stem_original(monkeypatch):
+    """渲染成功 → 缓存目录出现与帧同 stem 的原图（横屏视角彩色 PNG）。"""
+    wc = _mock_weather(monkeypatch)
+
+    r = client.get("/api/images/weather/raw")
+    assert r.status_code == 200, r.text
+    assert r.content[:4] == b"FPS6"
+
+    frames = list(wc.CACHE_DIR.glob("weather_*.fps6"))
+    origs = list(wc.CACHE_DIR.glob("weather_*.png"))
+    assert len(frames) == 1, frames
+    assert len(origs) == 1, origs
+    assert frames[0].stem == origs[0].stem
+    img = Image.open(io.BytesIO(origs[0].read_bytes()))
+    assert img.size == (1600, 1200)          # 横屏用户视角
+    assert img.getpixel((800, 600)) == _UNIQUE_RGB   # 原始彩色，未量化
+
+
+def test_weather_preview_from_original_not_frame(monkeypatch):
+    """预览内容来自落盘原图：含 6 色板外的品红色，不可能是帧还原产物。"""
+    _mock_weather(monkeypatch)
+
+    r = client.get("/api/images/weather/preview")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
+    assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
+
+
+def test_weather_preview_unavailable_503(monkeypatch):
+    """天气数据不可用 → 预览 503，无帧还原兑底路径。"""
+    from app import weather_card
+    monkeypatch.setattr(weather_card, "fetch_weather", lambda: None)
+
+    assert client.get("/api/images/weather/preview").status_code == 503
+    assert client.get("/api/images/weather/raw").status_code == 503
+
+
+def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_path):
+    """帧缓存滚动清理时，同 stem 原图一并成对清理，无孤儿原图残留。"""
+    import os
+    import time
+    wc = _mock_weather(monkeypatch)
+    wc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 预置 10 对旧缓存（帧 + 同 stem 原图），mtime 递减
+    stale_stems = []
+    base = time.time() - 10 * 86400
+    for i in range(10):
+        stem = f"weather_20000101_old{i:02d}"
+        stale_stems.append(stem)
+        t = base - i * 3600
+        for suffix in (".fps6", ".png"):
+            p = wc.CACHE_DIR / f"{stem}{suffix}"
+            p.write_bytes(b"x")
+            os.utime(p, (t, t))
+
+    r = client.get("/api/images/weather/raw")   # 触发渲染 + 滚动清理
+    assert r.status_code == 200, r.text
+
+    frames = {p.stem for p in wc.CACHE_DIR.glob("weather_*.fps6")}
+    origs = {p.stem for p in wc.CACHE_DIR.glob("weather_*.png")}
+    assert len(frames) <= wc.CACHE_KEEP          # 旧帧被滚动清理
+    # 最旧的 3 对：帧与原图一并删除
+    for stem in stale_stems[-3:]:
+        assert stem not in frames and stem not in origs, stem
+    # 剩余缓存或对完整：无孤儿原图，也无孤儿帧
+    assert origs == frames
+    # 当日新渲染的一对仍在
+    assert any(not s.startswith("weather_20000101") for s in frames)
+
+
+def test_weather_settings_clear_removes_originals_too(monkeypatch):
+    """保存天气设置清帧缓存时，同 stem 原图同批清理（不残留孤儿）。"""
+    wc = _mock_weather(monkeypatch)
+    assert client.get("/api/images/weather/raw").status_code == 200
+    frames = list(wc.CACHE_DIR.glob("weather_*.fps6"))
+    origs = list(wc.CACHE_DIR.glob("weather_*.png"))
+    assert frames and origs
+
+    r = client.put("/api/settings", json={"qweather_city": "新城市"})
+    assert r.status_code == 200, r.text
+    assert not list(wc.CACHE_DIR.glob("weather_*.fps6"))
+    assert not list(wc.CACHE_DIR.glob("weather_*.png"))
