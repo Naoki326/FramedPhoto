@@ -411,3 +411,55 @@ def test_weather_settings_clear_removes_originals_too(monkeypatch):
     assert r.status_code == 200, r.text
     assert not list(wc.CACHE_DIR.glob("weather_*.fps6"))
     assert not list(wc.CACHE_DIR.glob("weather_*.png"))
+
+
+# ---------- 自由模块（T3 #6：降级文字卡入库 + 预览删帧还原回退） ----------
+
+def _mock_free_degrade(monkeypatch):
+    """自由模块降级：LLM key 清空、文生图失败 → 纯文字卡片（无网络）。"""
+    from app import free_module as fm
+    from app.config import settings
+    monkeypatch.setattr(settings, "zhipu_api_key", "")
+    monkeypatch.setattr(fm, "_generate_illustration", lambda prompt: None)
+    monkeypatch.setattr(fm, "_cache_fps6", None)   # 防跨测试内存缓存泄漏
+    monkeypatch.setattr(fm, "_cache_ts", 0)
+    monkeypatch.setattr(fm, "_cache_key", "")
+    return fm
+
+
+def test_free_degraded_text_card_saved_and_preview_200(monkeypatch):
+    """降级生成纯文字卡后，内容库出现该卡片原图，预览 200。"""
+    from pathlib import Path
+    from app import db
+    from app.config import settings
+    _mock_free_degrade(monkeypatch)
+
+    r = client.get("/api/images/free/raw?refresh=true")
+    assert r.status_code == 200, r.text
+    assert r.content[:4] == b"FPS6"
+
+    # 内容库出现该卡片原图（降级路径同样归档）
+    cards = [m for m in db.list_images() if m["filename"].startswith("自由模块·")]
+    assert cards, "降级文字卡应入库"
+    up = Path(settings.upload_dir)
+    assert (up / f"{cards[0]['id']}.orig").exists()
+
+    # 预览 200（来自入库原图缩略，非帧还原）
+    r = client.get("/api/images/free/preview")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg")
+
+
+def test_free_preview_404_without_original(monkeypatch, tmp_path):
+    """无任何卡片原图 → 404，不再有帧还原兑底（帧可渲染也不用于预览）。"""
+    from app import free_module as fm
+    from app.config import settings
+    from app.epd_image import prepare_image
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+    # 渲染可用（返回合法帧）也不得用于预览：若帧还原分支仍在，这里会 200 PNG
+    frame = prepare_image(_png_bytes(1728, 1296, (10, 200, 10)), dither=True).data
+    monkeypatch.setattr(fm, "render_free_fps6", lambda **kw: frame)
+
+    r = client.get("/api/images/free/preview")
+    assert r.status_code == 404, r.text
+    assert "original" in r.json()["detail"]

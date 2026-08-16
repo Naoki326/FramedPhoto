@@ -195,6 +195,32 @@ def test_free_regenerates_when_segment_changes(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_render_free_degrades_text_card_saves_to_library(monkeypatch):
+    """降级生成纯文字卡（文生图失败）后，卡片原图同样归档到内容库（T3 #6）。
+
+    降级日管理台预览依赖入库的原图，否则预览 404。
+    """
+    from app import db
+    from pathlib import Path
+    from app.config import settings
+
+    monkeypatch.setattr(fm, "_generate_illustration", lambda prompt: None)
+
+    def free_cards() -> list:
+        return [m for m in db.list_images() if m["filename"].startswith("自由模块·")]
+
+    before = len(free_cards())
+    assert fm.render_free_fps6(refresh=True) is not None
+    cards = free_cards()
+    assert len(cards) == before + 1, "降级文字卡应入库"
+    m = cards[0]
+    assert m["landscape"] == 1
+    up = Path(settings.upload_dir)
+    orig = Image.open(io.BytesIO((up / f"{m['id']}.orig").read_bytes()))
+    assert orig.size == (1600, 1200)                # 横屏文字卡原图（未量化）
+    assert (up / f"{m['id']}.fps6").exists()        # 设备格式副本
+
+
 def test_render_free_saves_card_png_to_library(monkeypatch):
     """渲染成功后「加文字后的完整卡片 PNG 原图」自动入库（不裁剪/不量化）。"""
     from app import db
@@ -265,3 +291,13 @@ def test_detect_tiling_flags_bad_and_accepts_good():
     buf2 = io.BytesIO(); bad_img.save(buf2, "PNG")
     bad = prepare_image(buf2.getvalue(), dither=False).data
     assert _detect_tiling(bad) is True, "平铺坏图应判异常"
+
+
+def test_detect_tiling_rejects_malformed_frames():
+    """非法帧（坏 magic / 截断）解析失败 → 判异常（True），走重试/降级。
+
+    parse_fps6 迁移（T3 #6）后行为保持：解析抛 ValueError 同样返回 True。
+    """
+    from app.free_module import _detect_tiling
+    assert _detect_tiling(b"\x00" * 40) is True              # 坏 magic
+    assert _detect_tiling(b"FPS6" + b"\x00" * 30) is True   # 截断

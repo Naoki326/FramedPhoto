@@ -26,7 +26,6 @@ import hashlib
 import io
 import json
 import logging
-import struct
 from pathlib import Path
 
 import requests
@@ -36,8 +35,8 @@ from app.config import settings
 from app.epd_image import (
     DEVICE_HEIGHT,
     DEVICE_WIDTH,
-    PreparedImage,
     find_cjk_font,
+    parse_fps6,
     prepare_image,
     preview_png_landscape,
 )
@@ -451,14 +450,13 @@ TILE_SCORE_OK = 100.0
 def _detect_tiling(data: bytes) -> bool:
     """检测 FPS6 内容是否重复平铺（生成异常特征）。True = 异常，应丢弃重试。
 
-    原理：正常插画相邻内容差异大；平铺异常时以 400px/800px 偏移的行自相关
-    极低（同图重复）。返回 False 表示内容正常。
+    帧经 parse_fps6 解析校验（magic/长度必检；内部自检不检尺寸，
+    见 epic #1），渲染恒用理想色板。原理：正常插画相邻内容差异大；
+    平铺异常时以 400px/800px 偏移的行自相关极低（同图重复）。
+    返回 False 表示内容正常。
     """
     try:
-        w, h = struct.unpack_from("<II", data, 4)
-        if (w, h) != (DEVICE_WIDTH, DEVICE_HEIGHT) or len(data) != 20 + w * h // 2:
-            return True
-        prepared = PreparedImage(width=w, height=h, data=data)
+        prepared = parse_fps6(data)
         img = Image.open(io.BytesIO(preview_png_landscape(prepared, True))).convert("RGB")
         W, H = img.size
         px = img.load()
@@ -473,7 +471,7 @@ def _detect_tiling(data: bytes) -> bool:
         return (sum(vals) / len(vals)) < TILE_SCORE_OK
     except Exception as exc:  # noqa: BLE001
         logger.warning("free tiling check failed: %s", exc)
-        return True   # 解析失败视为异常，走重试/降级
+        return True   # 解析失败（parse_fps6 抛 ValueError 等）视为异常，走重试/降级
 
 
 # ═══════════════════════ 归档到内容库 ═══════════════════════
@@ -587,10 +585,11 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
         break
 
     if not data:
-        # 纯文字卡片（PNG → FPS6）降级
+        # 纯文字卡片（PNG → FPS6）降级；同样入库，降级日预览不 404（T3 #6）
         png = _render_text_card(module, title, body)
         if png:
             data = prepare_image(png, dither=True).data
+            _save_to_library(module["name"], png)
     if not data:
         logger.warning("free module render failed: %s", module["name"])
         return None
