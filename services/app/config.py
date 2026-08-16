@@ -1,4 +1,7 @@
 """应用配置：从环境变量 / .env 读取。"""
+from pathlib import Path
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +19,12 @@ class Settings(BaseSettings):
     ota_dir: str = "./ota"
     db_path: str = "./framedphoto.db"
     log_level: str = "INFO"
+
+    # 渲染缓存路径（公开设置：env 可覆盖；默认值与原模块私有路径一致，
+    # 测试隔离同 DB_PATH 模式，见 services/conftest.py）
+    free_cache_dir: str = str(Path(__file__).resolve().parent / "free_cache")
+    weather_cache_dir: str = str(Path(__file__).resolve().parent / "weather_cache")
+    ip_loc_cache_file: str = ""    # 留空 = WEATHER_CACHE_DIR/ip_loc.json
 
     # AI 照片分析（VLM）
     vlm_enabled: bool = True
@@ -84,6 +93,12 @@ class Settings(BaseSettings):
     jimeng_access_key: str = ""
     jimeng_secret_key: str = ""
     jimeng_ratio: str = "4:3"   # 横屏（相框横放观看）
+
+    def model_post_init(self, __context: Any) -> None:
+        # IP 定位缓存默认随天气卡片缓存目录（沿用原私有实现 CACHE_DIR/ip_loc.json
+        # 的耦合：只改 WEATHER_CACHE_DIR 时它跟着走，显式设置则独立）
+        if not self.ip_loc_cache_file:
+            self.ip_loc_cache_file = str(Path(self.weather_cache_dir) / "ip_loc.json")
 
 
 settings = Settings()

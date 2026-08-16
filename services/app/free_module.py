@@ -43,7 +43,8 @@ from app.epd_image import (
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path(__file__).resolve().parent / "free_cache"
+# 渲染缓存目录：config 公开设置（FREE_CACHE_DIR 可覆盖，默认与原私有路径一致）
+CACHE_DIR = Path(settings.free_cache_dir)
 CACHE_DIR.mkdir(exist_ok=True)
 
 # ═══════════════════════ 内置模块 ═══════════════════════

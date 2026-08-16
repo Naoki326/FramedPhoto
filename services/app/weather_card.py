@@ -39,9 +39,11 @@ _IP_LOC_CACHE: dict | None = None
 _IP_LOC_TS: float = 0
 _IP_LOC_TTL = 24 * 3600
 
-CACHE_DIR = Path(__file__).resolve().parent / "weather_cache"
+# 渲染缓存目录与 IP 定位缓存文件：config 公开设置（WEATHER_CACHE_DIR /
+# IP_LOC_CACHE_FILE 可覆盖，默认与原私有路径一致：ip_loc.json 随天气缓存目录）
+CACHE_DIR = Path(settings.weather_cache_dir)
 CACHE_DIR.mkdir(exist_ok=True)
-_IP_LOC_FILE = CACHE_DIR / "ip_loc.json"
+_IP_LOC_FILE = Path(settings.ip_loc_cache_file)
 
 
 def _ip_loc_disk() -> tuple[dict | None, float]:

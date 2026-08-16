@@ -330,12 +330,25 @@ def _mock_weather(monkeypatch):
     return weather_card
 
 
+def _fresh_weather_cache():
+    """清空天气卡片缓存（帧 + 同 stem 原图 + 当日设计）。
+
+    渲染缓存为会话级共享隔离（conftest 公开设置 env，#20）：依赖
+    「无当日缓存」或精确计数前置的用例，自行建立干净前置。
+    """
+    from app import weather_card
+    for pattern in ("weather_*.fps6", "weather_*.png", "design_*.json"):
+        for f in weather_card.CACHE_DIR.glob(pattern):
+            f.unlink(missing_ok=True)
+
+
 def test_weather_render_writes_same_stem_original(monkeypatch):
     """渲染成功 → 缓存目录出现与帧同 stem 的原图（横屏视角彩色 PNG）。
 
     渲染触发走泛化下载契约 /{id}/raw（固定 /weather/raw 已退役，T7 #17）。
     """
     wc = _mock_weather(monkeypatch)
+    _fresh_weather_cache()
     _clear_display()
     _set_single_slot("weather")
 
@@ -385,6 +398,7 @@ def test_weather_unavailable_404(monkeypatch):
     """
     from app import weather_card
     monkeypatch.setattr(weather_card, "fetch_weather", lambda: None)
+    _fresh_weather_cache()   # 前置：无当日缓存（会话共享缓存目录里可能有前序用例的当日卡）
 
     assert client.get("/api/images/weather-unavail00/raw").status_code == 404
     assert client.get("/api/images/weather-unavail00/preview").status_code == 404
@@ -395,6 +409,7 @@ def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_pa
     import os
     import time
     wc = _mock_weather(monkeypatch)
+    _fresh_weather_cache()   # 前置：只含本用例预置的旧缓存对
     wc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # 预置 10 对旧缓存（帧 + 同 stem 原图），mtime 递减
