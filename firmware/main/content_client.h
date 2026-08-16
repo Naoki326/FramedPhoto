@@ -5,6 +5,9 @@
  *   1. GET {server}/api/images/content → 解析内容清单，取当前应显示图片的 id 与下载 url
  *   2. GET {url}                      → 下载 FPS6 数据到本地文件（storage 分区）
  *
+ * 下载的帧在写入分区前校验帧头（magic/宽高，见 fps6_format.h）：坏帧按下载
+ * 失败处理，不写入 storage 分区、不触发刷屏，等下次心跳重试。
+ *
  * 下载 url 直接取服务端 content 响应中的 url 字段（相对路径自动拼服务端前缀），
  * 不依赖「id 拼 URL」约定——服务端新增内容类型无需固件改动。
  */

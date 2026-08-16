@@ -151,26 +151,88 @@ esp_err_t content_fetch_current(char *out_id, size_t id_len,
 typedef struct {
     const esp_partition_t *part;
     size_t written;   /* 已写入偏移 */
+    size_t got;       /* 帧头缓冲已收字节数；校验通过前不写分区 */
+    uint8_t header[FPS6_HEADER_SIZE];
     esp_err_t err;
 } dl_ctx_t;
+
+static uint32_t le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
+           (uint32_t)p[3] << 24;
+}
+
+/* 帧头校验：magic 与宽高（格式见 docs/protocol/fps6-format.md，常量见 fps6_format.h）。
+ * 不符 → 按下载失败返回：坏帧零字节落分区、不刷屏，等下次心跳重试。 */
+static esp_err_t frame_header_check(const uint8_t *h)
+{
+    if (memcmp(h, FPS6_MAGIC, 4) != 0) {
+        ESP_LOGE(TAG, "bad frame magic: %02x %02x %02x %02x", h[0], h[1], h[2], h[3]);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    uint32_t width = le32(h + 4);
+    uint32_t height = le32(h + 8);
+    if (width != FPS6_FRAME_WIDTH || height != FPS6_FRAME_HEIGHT) {
+        ESP_LOGE(TAG, "frame size mismatch: %ux%u (expect %dx%d)",
+                 (unsigned)width, (unsigned)height,
+                 FPS6_FRAME_WIDTH, FPS6_FRAME_HEIGHT);
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t write_chunk(dl_ctx_t *d, const void *data, size_t len)
+{
+    esp_err_t e = esp_partition_write(d->part, d->written, data, len);
+    if (e != ESP_OK) {
+        ESP_LOGE(TAG, "partition write @%u: %s", (unsigned)d->written, esp_err_to_name(e));
+        d->err = e;
+        return ESP_FAIL;
+    }
+    d->written += len;
+    return ESP_OK;
+}
 
 static esp_err_t image_handler(esp_http_client_event_t *evt)
 {
     dl_ctx_t *d = (dl_ctx_t *)evt->user_data;
-    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
-        esp_err_t e = esp_partition_write(d->part, d->written, evt->data, evt->data_len);
-        if (e != ESP_OK) {
-            ESP_LOGE(TAG, "partition write @%u: %s", (unsigned)d->written, esp_err_to_name(e));
-            d->err = e;
+    if (evt->event_id != HTTP_EVENT_ON_DATA || evt->data_len <= 0 || d->err != ESP_OK) {
+        return ESP_OK;
+    }
+    const char *p = evt->data;
+    int len = evt->data_len;
+
+    /* 帧头先缓冲、校验通过才写分区：恰好够长但头损坏的帧在此拒绝 */
+    if (d->got < FPS6_HEADER_SIZE) {
+        size_t take = FPS6_HEADER_SIZE - d->got;
+        if (take > (size_t)len) {
+            take = (size_t)len;
+        }
+        memcpy(d->header + d->got, p, take);
+        d->got += take;
+        p += take;
+        len -= (int)take;
+        if (d->got < FPS6_HEADER_SIZE) {
+            return ESP_OK; /* 帧头未收满 */
+        }
+        d->err = frame_header_check(d->header);
+        if (d->err != ESP_OK) {
+            return ESP_FAIL; /* 坏帧：中止传输，不写分区 */
+        }
+        if (write_chunk(d, d->header, FPS6_HEADER_SIZE) != ESP_OK) {
             return ESP_FAIL;
         }
-        d->written += evt->data_len;
+    }
+    if (len > 0 && write_chunk(d, p, len) != ESP_OK) {
+        return ESP_FAIL;
     }
     return ESP_OK;
 }
 
 /**
  * 下载 FPS6 图片并裸写入 storage 分区（调用前须已擦除分区）。
+ * 帧头（magic/宽高）校验通过才写分区：坏帧按下载失败返回，
+ * 不写分区、不触发刷屏，等下次心跳重试（常量见 fps6_format.h）。
  * @param url  完整下载地址（content_fetch_current 返回的 out_url）
  * @param part storage 分区句柄
  */
@@ -193,13 +255,14 @@ esp_err_t content_download_image(const char *url, const esp_partition_t *part)
         esp_http_client_cleanup(client);
     }
 
+    /* 帧头校验/分区写入失败的具体原因已在回调中记录（bad frame magic /
+     * frame size mismatch / partition write），优先返回精确错误码 */
+    if (ctx.err != ESP_OK) {
+        return ctx.err;
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "download %s failed: %s", url, esp_err_to_name(err));
         return err;
-    }
-    if (ctx.err != ESP_OK) {
-        ESP_LOGE(TAG, "write partition failed");
-        return ctx.err;
     }
 
     /* 校验文件大小（整帧 = 头 20B + 数据区 960000B，常量见 fps6_format.h） */
