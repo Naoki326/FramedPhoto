@@ -196,7 +196,6 @@ class PreparedImage:
     width: int
     height: int
     data: bytes            # FPS6 完整字节流（含头）
-    palette: list[tuple[int, int, int]]   # 兼容字段 = profile.targets
     profile: Spectra6Profile = SPECTRA6_PROFILE_V1
 
     @property
@@ -412,6 +411,45 @@ def _pack_fps6(raw: bytes, width: int, height: int) -> bytes:
     return header + raw
 
 
+def parse_fps6(frame: bytes,
+               expected_size: tuple[int, int] | None = None) -> PreparedImage:
+    """解析并校验 FPS6 帧，返回 PreparedImage（默认理想色板 v1 profile）。
+
+    帧格式见 docs/protocol/fps6-format.md（唯一人写权威）。
+    magic 与长度公式必检；expected_size 传入时校验宽高
+    （上传场景传入，坏图自检等内部场景不传）。非法输入抛 ValueError，
+    三种失败消息可区分：bad magic / truncated（短于长度公式）/
+    length mismatch（长于长度公式）。
+    帧字节不携带 profile 信息，解析结果恒带理想色板
+    （SPECTRA6_PROFILE_V1；ADR-0001：观感色概念已废除）。
+    """
+    if len(frame) < HEADER_SIZE:
+        raise ValueError(
+            f"truncated FPS6 frame: {len(frame)} bytes < {HEADER_SIZE}-byte header"
+        )
+    if frame[:4] != MAGIC:
+        raise ValueError(f"bad FPS6 magic: {frame[:4]!r}")
+    width, height = struct.unpack_from("<II", frame, 4)
+    expected_len = HEADER_SIZE + width * height // 2
+    if len(frame) < expected_len:
+        raise ValueError(
+            f"truncated FPS6 frame: {len(frame)} bytes < {expected_len}"
+            f" for {width}x{height}"
+        )
+    if len(frame) > expected_len:
+        raise ValueError(
+            f"FPS6 frame length mismatch: {len(frame)} bytes > {expected_len}"
+            f" for {width}x{height}"
+        )
+    if expected_size is not None and (width, height) != tuple(expected_size):
+        raise ValueError(
+            f"FPS6 frame size {width}x{height} != expected"
+            f" {expected_size[0]}x{expected_size[1]}"
+        )
+    return PreparedImage(width=width, height=height, data=frame,
+                         profile=SPECTRA6_PROFILE_V1)
+
+
 def prepare_image(
     image_bytes: bytes,
     width: int = DEVICE_WIDTH,
@@ -435,7 +473,7 @@ def prepare_image(
     # 量化+抖动集中在 _quantize_to_layout 内完成（之前这里冗余算过一遍，从未使用）
     raw = _quantize_to_layout(img, width, height, dither, prof)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
-                         palette=list(prof.targets), profile=prof)
+                         profile=prof)
 
 
 # ---------- 文案渲染（每日精选） ----------
@@ -566,7 +604,7 @@ def prepare_image_with_caption(
     prof = get_profile(profile) if isinstance(profile, str) else profile
     raw = _quantize_to_layout(canvas, width, height, dither, prof)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
-                         palette=list(prof.targets), profile=prof)
+                         profile=prof)
 
 
 # 字节值 -> (偶数像素 RGB, 奇数像素 RGB) 的 256 项查找表（预览用）

@@ -37,7 +37,6 @@ from app.epd_image import (
     DEVICE_HEIGHT,
     DEVICE_WIDTH,
     PreparedImage,
-    SPECTRA6_PALETTE,
     find_cjk_font,
     prepare_image,
     preview_png_landscape,
@@ -459,8 +458,7 @@ def _detect_tiling(data: bytes) -> bool:
         w, h = struct.unpack_from("<II", data, 4)
         if (w, h) != (DEVICE_WIDTH, DEVICE_HEIGHT) or len(data) != 20 + w * h // 2:
             return True
-        prepared = PreparedImage(width=w, height=h, data=data,
-                                 palette=SPECTRA6_PALETTE)
+        prepared = PreparedImage(width=w, height=h, data=data)
         img = Image.open(io.BytesIO(preview_png_landscape(prepared, True))).convert("RGB")
         W, H = img.size
         px = img.load()

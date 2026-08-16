@@ -27,7 +27,6 @@ from app import db, daily, nas_sync
 from app.config import settings
 from app.epd_image import (
     HEADER_SIZE,
-    SPECTRA6_PALETTE,
     PreparedImage,
     is_landscape,
     prepare_image,
@@ -229,7 +228,7 @@ async def get_daily_preview():
             pass
     raw = daily.DAILY_FILE.read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+    prepared = PreparedImage(width=w, height=h, data=raw)
     return Response(content=preview_png_landscape(prepared, bool(meta.get("landscape"))),
                     media_type="image/png")
 
@@ -286,7 +285,7 @@ async def get_free_preview(module: str | None = None):
     if not data:
         raise HTTPException(503, "free module unavailable")
     w, h = struct.unpack_from("<II", data, 4)
-    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    prepared = PreparedImage(width=w, height=h, data=data)
     return Response(content=preview_png_landscape(prepared, True), media_type="image/png")
 
 
@@ -306,7 +305,7 @@ async def get_weather_preview():
     if not data:
         raise HTTPException(503, "weather unavailable")
     w, h = struct.unpack_from("<II", data, 4)
-    prepared = PreparedImage(width=w, height=h, data=data, palette=SPECTRA6_PALETTE)
+    prepared = PreparedImage(width=w, height=h, data=data)
     return Response(content=preview_png_landscape(prepared, True), media_type="image/png")
 
 
@@ -442,7 +441,7 @@ async def display_preview():
         return Response(content=DISPLAY_ORIG.read_bytes(), media_type="image/jpeg")
     raw = DISPLAY_FILE.read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+    prepared = PreparedImage(width=w, height=h, data=raw)
     return Response(content=preview_png_landscape(prepared, bool(meta and meta["landscape"])),
                     media_type="image/png")
 
@@ -504,7 +503,7 @@ async def get_preview(img_id: str):
             return Response(content=orig.read_bytes(), media_type="image/jpeg")
     raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
     w, h = struct.unpack_from("<II", raw, 4)
-    prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+    prepared = PreparedImage(width=w, height=h, data=raw)
     return Response(content=preview_png_landscape(prepared, bool(meta.get("landscape"))),
                     media_type="image/png")
 
@@ -526,7 +525,7 @@ async def get_thumb(img_id: str):
         meta = db.get_image(img_id)
         raw = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
         w, h = struct.unpack_from("<II", raw, 4)
-        prepared = PreparedImage(width=w, height=h, data=raw, palette=SPECTRA6_PALETTE)
+        prepared = PreparedImage(width=w, height=h, data=raw)
         img = Image.open(io.BytesIO(preview_png_landscape(prepared, bool(meta.get("landscape")))))
     img = img.convert("RGB")
     w, h = img.size

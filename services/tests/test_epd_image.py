@@ -1,5 +1,6 @@
 """epd_image 模块测试（FPS6 4bit 双 IC 设备格式）。"""
 import io
+import struct
 
 import pytest
 from PIL import Image
@@ -12,6 +13,8 @@ from app.epd_image import (
     DEVICE_HEIGHT,
     NIBBLES,
     SPECTRA6_PALETTE,
+    SPECTRA6_PROFILE_V1,
+    parse_fps6,
     prepare_image,
     preview_png,
 )
@@ -135,6 +138,62 @@ def test_preview_roundtrip():
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     img = Image.open(io.BytesIO(png))
     assert img.size == (W, H)
+
+
+# ---------- parse_fps6：FPS6 帧解析与校验单一入口 ----------
+
+
+def test_parse_roundtrip_identity():
+    """prepare → parse_fps6 往返恒等：数据、宽高、profile（默认理想色板 v1）。"""
+    p = prepare_image(_make_image(320, 240), profile="v1")
+    parsed = parse_fps6(p.data)
+    assert parsed.data == p.data
+    assert (parsed.width, parsed.height) == (p.width, p.height)
+    assert parsed.profile == p.profile
+    # 帧不携带 profile 信息：v2 打包的帧解析结果仍为理想色板 v1
+    v2 = prepare_image(_make_image(320, 240), profile="v2")
+    assert parse_fps6(v2.data).profile is SPECTRA6_PROFILE_V1
+
+
+def test_parse_rejects_bad_magic():
+    """非 FPS6 帧拒绝，消息含 magic 关键词。"""
+    png = _make_image(320, 240)
+    with pytest.raises(ValueError, match="magic"):
+        parse_fps6(png)
+    with pytest.raises(ValueError, match="magic"):
+        parse_fps6(b"FPS7" + b"\x00" * 960016)
+
+
+def test_parse_rejects_truncated():
+    """截断帧拒绝（header 不完整 / 数据区不完整），消息含 truncated 关键词。"""
+    frame = prepare_image(_make_image(320, 240)).data
+    with pytest.raises(ValueError, match="truncated"):
+        parse_fps6(frame[:10])                     # header 都不完整
+    with pytest.raises(ValueError, match="truncated"):
+        parse_fps6(frame[:HEADER_SIZE + 1000])     # 数据区被截断
+
+
+def test_parse_rejects_length_mismatch():
+    """帧长于长度公式（尾部多余字节）拒绝，消息含 length、不含 truncated。"""
+    frame = prepare_image(_make_image(320, 240)).data
+    with pytest.raises(ValueError, match="length"):
+        parse_fps6(frame + b"\x00" * 16)
+
+
+def test_parse_size_check_optional():
+    """尺寸校验可选：传入 expected_size 且不符 → ValueError；不传则只检 magic 与长度。"""
+    # 自洽的 8x4 小帧：header 声明与数据区长度一致，但非设备尺寸
+    small = struct.pack("<4sIIBB6x", MAGIC, 8, 4, FORMAT_4BIT_DUAL_IC, 1) \
+        + b"\x11" * (8 * 4 // 2)
+    parsed = parse_fps6(small)                    # 不传：尺寸不被检查
+    assert (parsed.width, parsed.height) == (8, 4)
+    assert parsed.data == small
+    with pytest.raises(ValueError, match="size"):
+        parse_fps6(small, expected_size=(DEVICE_WIDTH, DEVICE_HEIGHT))
+    # 传入且相符：正常解析
+    frame = prepare_image(_make_image(320, 240)).data
+    full = parse_fps6(frame, expected_size=(DEVICE_WIDTH, DEVICE_HEIGHT))
+    assert full.data == frame
 
 
 def test_grayscale_input():
