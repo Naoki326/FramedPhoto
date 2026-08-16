@@ -22,7 +22,18 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 
-from app import content_sources, daily, db, display, nas_sync
+from app import (
+    content_sources,
+    daily,
+    db,
+    display,
+    free_module,
+    nas_sync,
+    runtime_config,
+    slots,
+    weather_card,
+)
+from app.analyzer import analyze_image
 from app.config import settings
 from app.epd_image import (
     is_landscape,
@@ -69,16 +80,14 @@ async def upload(file: UploadFile = File(...), dither: bool = True, bg: Backgrou
 
 def _auto_analyze_upload(path: Path, filename: str) -> None:
     try:
-        from app.analyzer import analyze_image
-        from app import db as _db
         a = analyze_image(str(path))
-        _db.upsert_photo_score(
+        db.upsert_photo_score(
             a.path, filename=a.filename or filename, caption=a.caption,
             description=a.description, type=a.type,
             memory_score=a.memory_score, beauty_score=a.beauty_score,
             reason=a.reason, shot_at=a.shot_at, shot_source=a.shot_source,
             gps_lat=a.gps_lat, gps_lon=a.gps_lon,
-            source=a.source, analyzed_at=_db.now(),
+            source=a.source, analyzed_at=db.now(),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("auto analyze upload failed: %s", exc)
@@ -152,8 +161,7 @@ async def delete_local_after_nas(img_id: str):
             path.unlink()
     for path in (str(original), str(original.resolve())):
         db.delete_photo_score(path)
-    from app import runtime_config
-    if (runtime_config.load().get("content_push") or {}).get("id") == img_id:
+    if (runtime_config.get("content_push") or {}).get("id") == img_id:
         runtime_config.save({"content_push": {}})
     db.delete_image(img_id)
     return {"ok": True, "deleted": img_id, "nas_path": meta["nas_path"]}
@@ -162,8 +170,7 @@ async def delete_local_after_nas(img_id: str):
 @router.get("/daily/selected")
 async def daily_selected():
     """当前手动指定的今日照片（无则 null）。"""
-    from app.runtime_config import load
-    m = load().get("daily_manual") or {}
+    m = runtime_config.get("daily_manual") or {}
     return {"path": m.get("path", ""), "date": m.get("date", "")}
 
 
@@ -175,27 +182,23 @@ async def daily_select(body: dict):
     优先以 photo_scores 里记录的路径形式保存（上传图入库为相对路径
     如 uploads/xx.orig），确保 daily_manual_pick 能查到评分记录。
     """
-    from datetime import datetime as _dt
-    from pathlib import Path as _P
-    from app import runtime_config
-    from app.config import settings as _s
     path = (body.get("path") or "").strip()
     if not path:
         raise HTTPException(404, "photo not found")
-    p = _P(path).resolve()
-    roots = [_P(_s.photo_lib_dir).resolve(), _P(_s.upload_dir).resolve()]
+    p = Path(path).resolve()
+    roots = [Path(settings.photo_lib_dir).resolve(), Path(settings.upload_dir).resolve()]
     if not any(p.is_relative_to(r) for r in roots) or not p.is_file():
         raise HTTPException(404, "photo not found")
     # 保存 DB 记录使用的路径形式（上传图为相对路径），保证手动指定可被查到
     db_path = path if db.get_photo_score(path) else str(p)
-    runtime_config.save({"daily_manual": {"path": db_path, "date": _dt.now().strftime("%Y-%m-%d")}})
+    runtime_config.save(
+        {"daily_manual": {"path": db_path, "date": datetime.now().strftime("%Y-%m-%d")}})
     return {"ok": True, "path": db_path}
 
 
 @router.delete("/daily/select")
 async def daily_unselect():
     """取消手动指定，恢复自动选片。"""
-    from app import runtime_config
     runtime_config.save({"daily_manual": {}})
     return {"ok": True}
 
@@ -205,7 +208,6 @@ def _free_module(module: str | None) -> str | None:
     （与 /content 一致，保证 raw/preview 渲染的图和 content 返回的一致）。"""
     if module:
         return module
-    from app import slots
     seg = slots.current_segment()
     if seg and seg.get("type") == slots.SLOT_FREE:
         return seg.get("module")
@@ -221,11 +223,10 @@ async def free_regenerate():
     卡片的清单条目（url/preview_url 由统一 helper _item_urls 组装为
     /api/images/{id}/raw|preview 形态），自由模块不可用 → 503（沿用固定
     路由时代 refresh 参数的失败语义；T7 #17 后本端点是唯一重生成入口）。"""
-    from app.free_module import SOURCE, render_free_fps6
-    data = render_free_fps6(refresh=True, module_name=_free_module(None))
+    data = free_module.render_free_fps6(refresh=True, module_name=_free_module(None))
     if not data:
         raise HTTPException(503, "free module unavailable")
-    item = SOURCE.meta()
+    item = free_module.SOURCE.meta()
     return {"ok": True, "item": _item_urls(item) if item else None}
 
 
@@ -414,8 +415,7 @@ def _content_pushed() -> dict | None:
     """当日有效的内容库推送图（清单条目，不含 url——由统一 helper 组装）；
     无则 None。内容库进清单走注入机制而非源 meta()（内容库没有
     「当前内容」概念，见 ADR-0002）。"""
-    from app.runtime_config import load
-    p = load().get("content_push") or {}
+    p = runtime_config.get("content_push") or {}
     if not p.get("id") or p.get("date") != datetime.now().strftime("%Y-%m-%d"):
         return None
     m = db.get_image(p["id"])
@@ -433,28 +433,26 @@ def _content_pushed() -> dict | None:
 
 @router.get("/content/pushed")
 async def content_pushed():
-    from app.runtime_config import load
-    p = load().get("content_push") or {}
+    p = runtime_config.get("content_push") or {}
     return {"pushed": p}
 
 
 @router.post("/content/push")
 async def content_push(body: dict):
     """将内容库某张图推送到显示（当日有效，次日自动回落）。"""
-    from app.runtime_config import save
     img_id = (body.get("id") or "").strip()
     if not img_id:
         raise HTTPException(400, "missing id")
     if not db.get_image(img_id):
         raise HTTPException(404, "image not found")
-    save({"content_push": {"id": img_id, "date": datetime.now().strftime("%Y-%m-%d")}})
+    runtime_config.save(
+        {"content_push": {"id": img_id, "date": datetime.now().strftime("%Y-%m-%d")}})
     return {"ok": True, "id": img_id}
 
 
 @router.delete("/content/push")
 async def content_unpush():
-    from app.runtime_config import save
-    save({"content_push": {}})
+    runtime_config.save({"content_push": {}})
     return {"ok": True}
 
 
@@ -473,8 +471,6 @@ async def content_list(device_id: str | None = None):
       free     时段 → 自由模块卡片（LLM+文生图每日生成；依赖未配置时回退照片）
     可附带设备 id 上报状态。
     """
-    from app import free_module, slots, weather_card
-
     item = None
     source = ""
 

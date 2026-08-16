@@ -187,6 +187,57 @@ def test_segments_stored_int_format_ok():
         assert slots.current_slot(_t("12:00")) == slots.SLOT_PHOTO
 
 
+# ---------- 旧键别名（B1 #19：别名解析住 runtime_config 内部） ----------
+
+def _write_runtime_config(data: dict) -> None:
+    """直写隔离后的 runtime_config.json（模拟历史文件；旧键无法经白名单保存）。"""
+    import json
+    from app import runtime_config
+    runtime_config.CONFIG_PATH.write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def test_segments_synthesizes_from_legacy_news_keys():
+    """现存含旧键的配置无需迁移：时段合成仍识别自由模块前身键
+    （slot_news / slot_news_enabled → free 段），语义与消费点旧 or-链一致。"""
+    _write_runtime_config({
+        "slot_weather": "00:00-08:00", "slot_weather_enabled": True,
+        "slot_photo": "08:00-19:00",
+        "slot_news": "19:00-24:00", "slot_news_enabled": True,
+    })
+    assert slots.segments() == [
+        {"start": "00:00", "type": "weather", "module": None},
+        {"start": "08:00", "type": "photo", "module": None},
+        {"start": "19:00", "type": "free", "module": None},
+    ]
+
+
+def test_segments_new_key_wins_over_legacy_news_key():
+    """新旧键同时存在 → 新键优先（旧 or-链语义：新键有值时旧键不生效）。"""
+    _write_runtime_config({
+        "slot_weather_enabled": False,
+        "slot_photo": "08:00-20:00",
+        "slot_news": "20:00-22:00", "slot_news_enabled": True,
+        "slot_free": "22:00-24:00", "slot_free_enabled": True,
+    })
+    segs = slots.segments()
+    free_starts = [s["start"] for s in segs if s["type"] == "free"]
+    assert free_starts == ["22:00"]           # 用新键 22:00 起的段，而非旧键 20:00
+    assert slots.current_slot(_t("21:00")) == slots.SLOT_PHOTO   # 旧键时段已让位
+    assert slots.current_slot(_t("22:30")) == slots.SLOT_FREE
+
+
+def test_segments_legacy_news_disabled_drops_free():
+    """旧键显式关闭（历史脏值字符串也按声明类型强转）→ 不合成 free 段。"""
+    _write_runtime_config({
+        "slot_weather_enabled": False,
+        "slot_photo": "08:00-20:00",
+        "slot_news": "20:00-24:00", "slot_news_enabled": "false",
+    })
+    segs = slots.segments()
+    assert [s["type"] for s in segs if s["type"] != "photo"] == []   # 无 free 段，全日 photo
+
+
 # ---------- segment_start（内容归属时刻，跨午夜追溯） ----------
 
 def test_segment_start_basic():

@@ -4,6 +4,7 @@
 使 db / upload / ota 落到临时位置，避免污染开发数据。
 """
 import io
+import json
 import os
 import tempfile
 
@@ -838,6 +839,66 @@ def test_calibration_generate_validates_frame(monkeypatch):
     assert r.status_code == 200, r.text
     assert display.DISPLAY_FILE.read_bytes() == good
     _clear_display()
+
+
+# ---------- 设置回显：旧键别名与类型化强转（B1 #19） ----------
+
+def _write_runtime_config(data: dict, monkeypatch) -> None:
+    """直写隔离后的 runtime_config.json（模拟老版本管理台保存的现存文件）。
+
+    走 PUT 无法写入旧键（白名单只收新键），旧键只能来自历史文件。
+    """
+    from app import runtime_config
+    runtime_config.CONFIG_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _get_settings_config(monkeypatch) -> dict:
+    """GET /api/settings（隔离 IP 定位网络调用）→ config 段。"""
+    from app import weather_card
+    monkeypatch.setattr(weather_card, "ip_location", lambda: {"city": "测试市"})
+    r = client.get("/api/settings")
+    assert r.status_code == 200, r.text
+    return r.json()["config"]
+
+
+def test_settings_echo_resolves_legacy_keys(monkeypatch):
+    """现存含旧键的 runtime_config.json（自由模块前身「新闻卡片」时代保存）
+    无需迁移：设置回显直接给出新键语义（slot_news → slot_free），
+    开关为真布尔（历史脏值 "true" 字符串也按注册处声明类型强转）。"""
+    _write_runtime_config({
+        "slot_weather": "06:00-10:00",
+        "slot_news": "20:00-23:00",
+        "slot_news_enabled": "true",
+        "news_source": "legacy",   # 无对应新键的历史遗留键：忽略
+    }, monkeypatch)
+    cfg = _get_settings_config(monkeypatch)
+    assert cfg["slot_free"] == "20:00-23:00"
+    assert cfg["slot_free_enabled"] is True
+    assert cfg["slot_weather"] == "06:00-10:00"
+
+
+def test_settings_new_key_wins_over_legacy(monkeypatch):
+    """文件同时含新旧键 → 回显新键优先、旧键兜底的语义不变。"""
+    _write_runtime_config({
+        "slot_news": "20:00-23:00", "slot_news_enabled": True,
+        "slot_free": "22:00-24:00", "slot_free_enabled": False,
+    }, monkeypatch)
+    cfg = _get_settings_config(monkeypatch)
+    assert cfg["slot_free"] == "22:00-24:00"
+    assert cfg["slot_free_enabled"] is False
+
+
+def test_settings_echo_typed_after_put(monkeypatch):
+    """保存后回显按注册处声明的类型返回：开关真布尔、时段串为字符串。"""
+    r = client.put("/api/settings", json={
+        "free_enabled": False, "slot_free": "21:30-24:00", "slot_free_enabled": True,
+    })
+    assert r.status_code == 200, r.text
+    cfg = _get_settings_config(monkeypatch)
+    assert cfg["free_enabled"] is False
+    assert cfg["slot_free_enabled"] is True
+    assert cfg["slot_free"] == "21:30-24:00"
 
 
 # ---------- 内容源契约测试（T7 #17 收口：每源四断言全套，ADR-0002） ----------

@@ -56,11 +56,9 @@ async def get_settings():
         "config": {
             "slot_weather": runtime_config.effective("slot_weather", settings),
             "slot_photo": runtime_config.effective("slot_photo", settings),
-            "slot_free": (runtime_config.effective("slot_free", settings)
-                          or runtime_config.effective("slot_news", settings)),
+            "slot_free": runtime_config.effective("slot_free", settings),
             "slot_weather_enabled": runtime_config.effective("slot_weather_enabled", settings),
-            "slot_free_enabled": bool(runtime_config.effective("slot_free_enabled", settings)
-                                      or runtime_config.effective("slot_news_enabled", settings)),
+            "slot_free_enabled": runtime_config.effective("slot_free_enabled", settings),
             "slot_segments": slots.segments(),
             "free_enabled": runtime_config.effective("free_enabled", settings),
             "free_rotate": runtime_config.effective("free_rotate", settings),

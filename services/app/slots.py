@@ -61,21 +61,23 @@ def to_hhmm(minutes: int) -> str:
 
 
 def _legacy_raw() -> list[tuple[int, int, str]]:
-    """旧三时段配置 → [(start, end, type)]，跨天段拆成两段。"""
+    """旧三时段配置 → [(start, end, type)]，跨天段拆成两段。
+
+    新旧键兼容（slot_news → slot_free 等）由 runtime_config.effective 内部
+    解析（新键优先、旧键兜底，见 runtime_config.ALIASES）——这里只按新键
+    读取，类型也由 runtime_config 按注册处声明强转（开关恒为布尔）。
+    """
     raw: list[tuple[int, int, str]] = []
-    if bool(effective("slot_weather_enabled", settings)):
-        r = parse_range(effective("slot_weather", settings) or "")
+    if effective("slot_weather_enabled", settings):
+        r = parse_range(effective("slot_weather", settings))
         if r:
             raw.append((r[0], r[1], SLOT_WEATHER))
-    r = parse_range(effective("slot_photo", settings) or "")
+    r = parse_range(effective("slot_photo", settings))
     if r:
         raw.append((r[0], r[1], SLOT_PHOTO))
-    free_spec = effective("slot_free", settings) or effective("slot_news", settings) or ""
-    if (bool(effective("slot_free_enabled", settings))
-            or bool(effective("slot_news_enabled", settings))) and free_spec:
-        r = parse_range(free_spec)
-        if r:
-            raw.append((r[0], r[1], SLOT_FREE))
+    r = parse_range(effective("slot_free", settings))
+    if r and effective("slot_free_enabled", settings):
+        raw.append((r[0], r[1], SLOT_FREE))
     out: list[tuple[int, int, str]] = []
     for start, end, typ in raw:
         if end <= start:      # 跨天（如 21:00-08:00）→ 拆成两段
