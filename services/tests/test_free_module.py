@@ -6,6 +6,7 @@
 import datetime as dt
 import io
 import os
+import random
 import tempfile
 
 _tmp = tempfile.mkdtemp(prefix="framedphoto-free-")
@@ -204,8 +205,14 @@ def test_render_free_saves_card_png_to_library(monkeypatch):
         return {"title": "T", "body": "B", "image_prompt": "p"}
 
     def fake_illus(prompt):
+        # 带纹理的插画 mock：纯色图在校准隔离（v2 占位色）下会被
+        # 平铺自检误判拦截（pre-existing），噪声图自检得分稳定通过
+        rng = random.Random(42)
+        img = Image.new("RGB", (1024, 768))
+        img.putdata([(rng.randrange(256), rng.randrange(256), rng.randrange(256))
+                     for _ in range(1024 * 768)])
         buf = io.BytesIO()
-        Image.new("RGB", (1024, 768), (200, 220, 180)).save(buf, "PNG")
+        img.save(buf, "PNG")
         return buf.getvalue()
 
     monkeypatch.setattr(fm, "_llm_content", fake_llm)
