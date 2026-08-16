@@ -623,7 +623,7 @@ def test_display_raw_fps6_rejects_bad_size():
 
 def test_display_raw_fps6_ok_then_preview_404():
     """直推合法帧成功；「当前显示」预览无原图 → 404（帧还原回退已删）。"""
-    from app.routers import images as images_router
+    from app import display
     _clear_display()
     frame = _valid_frame()
     r = _post_frame(frame)
@@ -640,7 +640,7 @@ def test_display_raw_fps6_ok_then_preview_404():
     r = client.get("/api/images/display/preview")
     assert r.status_code == 404, r.text
     assert "original" in r.json()["detail"]
-    assert not images_router.DISPLAY_ORIG.exists()
+    assert not display.DISPLAY_ORIG.exists()
     _clear_display()
 
 
@@ -662,7 +662,7 @@ def test_display_upload_preview_200_from_original():
 def test_calibration_generate_validates_frame(monkeypatch):
     """校准图生成路径同样走统一帧校验：坏帧 400（中文消息保留）、不写 display；合法帧直推成功。"""
     from app import calibration as calib
-    from app.routers import images as images_router
+    from app import display
     _clear_display()
 
     # magic 错
@@ -670,7 +670,7 @@ def test_calibration_generate_validates_frame(monkeypatch):
     r = client.post("/api/calibration/generate")
     assert r.status_code == 400, r.text
     assert r.json()["detail"] == "不是有效的 FPS6 文件"
-    assert not images_router.DISPLAY_FILE.exists()
+    assert not display.DISPLAY_FILE.exists()
 
     # 截断
     monkeypatch.setattr(calib, "chart_fps6", lambda: _valid_frame()[:-4096])
@@ -689,7 +689,7 @@ def test_calibration_generate_validates_frame(monkeypatch):
     monkeypatch.setattr(calib, "chart_fps6", lambda: good)
     r = client.post("/api/calibration/generate")
     assert r.status_code == 200, r.text
-    assert images_router.DISPLAY_FILE.read_bytes() == good
+    assert display.DISPLAY_FILE.read_bytes() == good
     _clear_display()
 
 
@@ -701,16 +701,34 @@ def _set_single_slot(slot_type: str) -> None:
     runtime_config.save({"slot_segments": [{"start": "00:00", "type": slot_type}]})
 
 
-# (源前缀, 时段类型, 对应固定 raw 路由)
+# (源前缀, 对应固定 raw 路由；None = 无固定路由——内容库的设备下载端点
+#  历来就是 /{id}/raw 本身，无独立固定路由可比)
 _SOURCE_CASES = [
-    ("daily", "photo", "/api/images/daily/raw"),
-    ("weather", "weather", "/api/images/weather/raw"),
-    ("free", "free", "/api/images/free/raw"),
+    ("daily", "/api/images/daily/raw"),
+    ("weather", "/api/images/weather/raw"),
+    ("free", "/api/images/free/raw"),
+    ("display", "/api/images/display/raw"),
+    ("library", None),
 ]
 
 
-def _prepare_source(monkeypatch, prefix: str) -> None:
-    """按既有流程（上传图片 / 桩外部依赖 / 时段配置）让该源产出「当前有效 id」。"""
+def _prepare_source(monkeypatch, prefix: str) -> str:
+    """按既有流程（上传图片 / 置顶上传 / 桩外部依赖 / 时段配置）产出「当前有效 id」。
+
+    五源（T3 #13）：display 经置顶显示上传（优先于一切时段内容）；
+    library 经普通上传（id 即内容库查找键，无前缀）。
+    """
+    if prefix == "display":
+        _clear_display()
+        r = client.post("/api/images/display/upload",
+                        files={"file": ("disp.png", _png_bytes(1600, 1200, (198, 40, 40)), "image/png")})
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+    if prefix == "library":
+        r = client.post("/api/images/upload",
+                        files={"file": ("lib.png", _png_bytes(color=(40, 128, 60)), "image/png")})
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
     if prefix == "daily":
         _set_single_slot("photo")
         r = client.post("/api/images/upload",
@@ -722,37 +740,58 @@ def _prepare_source(monkeypatch, prefix: str) -> None:
     else:
         _mock_free_degrade(monkeypatch)
         _set_single_slot("free")
-
-
-@pytest.mark.parametrize("prefix,slot_type,fixed_raw_url", _SOURCE_CASES)
-def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, slot_type, fixed_raw_url):
-    """参数化契约测试雏形（T2 #12）：三源跑两断言。
-
-    改道是双轨行为零变化：本用例先把契约钉在 HTTP seam 上，
-    改道（/{id}/raw 前缀分发查注册表）前后都必须绿。
-    1. 前缀分发命中：内容指纹 id 经 /{id}/raw 返回 200（不落入内容库 404），
-       且字节与对应固定路由完全一致；
-    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过。
-    """
-    from app.epd_image import parse_fps6
-    _prepare_source(monkeypatch, prefix)
-
     r = client.get("/api/images/content")
     assert r.status_code == 200, r.text
     images = r.json()["images"]
     assert images, f"{prefix} 源应有当前内容"
-    content_id = images[0]["id"]
-    assert content_id.startswith(prefix + "-"), content_id
+    return images[0]["id"]
+
+
+@pytest.mark.parametrize("prefix,fixed_raw_url", _SOURCE_CASES)
+def test_raw_dispatch_matches_fixed_route_and_parses(monkeypatch, prefix, fixed_raw_url):
+    """参数化契约测试（T2 #12 三源 → T3 #13 五源）：每源跑两断言。
+
+    改道是双轨行为零变化：本用例把契约钉在 HTTP seam 上，改道前后都
+    必须绿。
+    1. 分发命中：内容指纹 id 经 /{id}/raw 返回 200（不误落其他源 404），
+       有对应固定路由的四源字节与固定路由完全一致；内容库（无前缀 id
+       落兜底源）与既有直查行为一致；
+    2. raw 可过帧解析：parse_fps6 校验 magic / 长度公式通过。
+    """
+    from app.epd_image import parse_fps6
+    content_id = _prepare_source(monkeypatch, prefix)
+
+    if prefix != "library":
+        assert content_id.startswith(prefix + "-"), content_id
 
     dispatched = client.get(f"/api/images/{content_id}/raw")
     assert dispatched.status_code == 200, dispatched.text
     assert dispatched.headers["content-type"] == "application/octet-stream"
-    fixed = client.get(fixed_raw_url)
-    assert fixed.status_code == 200, fixed.text
-    assert dispatched.content == fixed.content
+    if fixed_raw_url is not None:
+        fixed = client.get(fixed_raw_url)
+        assert fixed.status_code == 200, fixed.text
+        assert dispatched.content == fixed.content
 
     prepared = parse_fps6(dispatched.content)
     assert (prepared.width, prepared.height) == (1200, 1600)
+    if prefix == "display":
+        # 置顶显示优先于时段，不清理会污染后续用例的 /content 断言
+        _clear_display()
+
+
+def test_raw_unknown_no_prefix_id_lands_library_404():
+    """无前缀未知 id 落内容库兜底：404 文案与既有直查一致。"""
+    r = client.get("/api/images/no-such-id-xyz/raw")
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "image not found"
+
+
+def test_raw_display_prefix_without_frame_404():
+    """display- 前缀但当前无置顶显示 → 404（改道前后语义一致）。"""
+    _clear_display()
+    r = client.get("/api/images/display-deadbeef00/raw")
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "no display image"
 
 
 def test_news_prefix_alias_hits_free_source(monkeypatch):

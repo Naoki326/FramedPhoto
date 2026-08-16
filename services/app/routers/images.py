@@ -8,9 +8,7 @@ images.py — 图片上传 / 转换 / 内容管理（SQLite 持久化）。
 - DELETE /{id}       删除图片
 - GET  /content      内容清单（设备轮询，取最新一张）
 """
-import hashlib
 import io
-import json
 import logging
 import re
 import uuid
@@ -20,12 +18,13 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from PIL import Image, ImageOps
+from PIL import Image
 
-from app import content_sources, db, daily, nas_sync
+from app import content_sources, daily, db, display, nas_sync
 from app.config import settings
 from app.epd_image import (
     is_landscape,
+    make_thumbnail,
     parse_fps6,
     prepare_image,
 )
@@ -221,7 +220,7 @@ async def get_daily_preview():
     path = meta.get("path")
     try:
         if path and Path(path).is_file():
-            return Response(content=_make_thumbnail(Path(path).read_bytes()),
+            return Response(content=make_thumbnail(Path(path).read_bytes()),
                             media_type="image/jpeg")
     except Exception:
         pass
@@ -275,7 +274,7 @@ async def get_free_preview(module: str | None = None):
         up = Path(settings.upload_dir)
         origs = sorted(up.glob("*.orig"), key=lambda p: p.stat().st_mtime, reverse=True)
         if origs:
-            return Response(content=_make_thumbnail(origs[0].read_bytes(), max_side=800),
+            return Response(content=make_thumbnail(origs[0].read_bytes(), max_side=800),
                             media_type="image/jpeg")
     except Exception:
         pass
@@ -304,48 +303,12 @@ async def get_weather_preview():
     png = weather_card.weather_original_png()
     if not png:
         raise HTTPException(404, "weather original missing")
-    return Response(content=_make_thumbnail(png, max_side=800), media_type="image/jpeg")
+    return Response(content=make_thumbnail(png, max_side=800), media_type="image/jpeg")
 
 
 # ---------- 临时显示（一次性上传切换，不保存到照片库 / 不入库分析） ----------
-
-DISPLAY_FILE = UPLOAD_DIR / "display.fps6"
-DISPLAY_META = UPLOAD_DIR / "display.json"
-# 原始图缩略图（量化前，供管理台「当前显示」预览，省流量）
-DISPLAY_ORIG = UPLOAD_DIR / "display.orig.jpg"
-
-
-def _display_meta() -> dict | None:
-    """临时显示图元数据（含内容指纹）；无则 None。
-
-    帧头解读统一走 parse_fps6（内部自检口径，不校验尺寸）：
-    DISPLAY_FILE 损坏不可解析时视同无临时显示（回落时段自动内容）。
-    """
-    if not DISPLAY_FILE.exists():
-        return None
-    m = {}
-    if DISPLAY_META.exists():
-        try:
-            m = json.loads(DISPLAY_META.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            m = {}
-    raw = DISPLAY_FILE.read_bytes()
-    try:
-        prepared = parse_fps6(raw)
-    except ValueError as exc:
-        logger.warning("display frame unreadable, treating as no manual display: %s", exc)
-        return None
-    content_id = "display-" + hashlib.sha256(raw).hexdigest()[:10]
-    return {
-        "id": content_id,
-        "filename": m.get("filename", ""),
-        "landscape": 1 if m.get("landscape") else 0,
-        "width": prepared.width,
-        "height": prepared.height,
-        "url": "/api/images/display/raw",
-        "preview_url": "/api/images/display/preview",
-        "has_orig": bool(m.get("has_orig")),
-    }
+# 文件协议（帧 / 元数据 json / 原图缩略图与内容指纹 id）在领域模块
+# app/display.py（内容源适配器同步注册进 content_sources，ADR-0002）
 
 
 @router.post("/display/upload")
@@ -358,38 +321,7 @@ async def display_upload(file: UploadFile = File(...)):
         prepared = prepare_image(raw, settings.epd_width, settings.epd_height)
     except Exception as exc:
         raise HTTPException(422, f"image conversion failed: {exc}") from exc
-    DISPLAY_FILE.write_bytes(prepared.data)
-    # 保存量化前原图缩略图（管理台「当前显示」预览用，省流量）
-    _write_display_orig(raw)
-    DISPLAY_META.write_text(json.dumps({
-        "filename": file.filename or "",
-        "landscape": 1 if is_landscape(raw) else 0,
-        "has_orig": True,
-        "ts": db.now(),
-    }, ensure_ascii=False), encoding="utf-8")
-    return _display_meta()
-
-
-def _write_display_orig(raw: bytes) -> None:
-    """把原始图片转成缩略图保存（最长边 ~500px，JPEG 80），失败时静默。"""
-    try:
-        DISPLAY_ORIG.write_bytes(_make_thumbnail(raw))
-    except Exception:
-        try:
-            DISPLAY_ORIG.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _make_thumbnail(raw: bytes, max_side: int = 500, quality: int = 80) -> bytes:
-    """原始图片 -> JPEG 缩略图字节（量化前原图，省流量）。"""
-    import io
-    img = Image.open(io.BytesIO(raw))
-    img = ImageOps.exif_transpose(img)
-    img.thumbnail((max_side, max_side), Image.LANCZOS)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=quality)
-    return buf.getvalue()
+    return display.save_upload(raw, prepared, file.filename or "")
 
 
 def _classify_fps6_error(msg: str) -> tuple[str, tuple[int, int] | None]:
@@ -413,7 +345,7 @@ async def display_upload_raw_fps6(file: UploadFile = File(...)):
     用于 tools/generate_calibration_chart.py 生成的校准图——该图以设备
     nibble 直写六种纯色，必须绕过服务端量化，否则纯色会被重算破坏。
     校验统一走 parse_fps6（magic/尺寸/长度），保留既有 400 语义与消息；
-    校验通过后原样写入 DISPLAY_FILE，设备刷新即显示。
+    校验通过后由 display 领域模块原样落帧，设备刷新即显示。
     """
     raw = await file.read()
     try:
@@ -427,21 +359,13 @@ async def display_upload_raw_fps6(file: UploadFile = File(...)):
                 400, f"size must be {settings.epd_width}x{settings.epd_height},"
                      f" got {actual[0]}x{actual[1]}") from exc
         raise HTTPException(400, "truncated FPS6 payload") from exc
-    DISPLAY_FILE.write_bytes(raw)
-    DISPLAY_ORIG.unlink(missing_ok=True)   # 校准图直推无原图，清理旧缩略图
-    DISPLAY_META.write_text(json.dumps({
-        "filename": file.filename or "calibration.fps6",
-        "landscape": 1,   # 校准图按横放视角设计，设备横放观看
-        "has_orig": False,
-        "ts": db.now(),
-    }, ensure_ascii=False), encoding="utf-8")
-    return _display_meta()
+    return display.save_raw_fps6(raw, file.filename or "calibration.fps6")
 
 
 @router.get("/display/current")
 async def display_current():
     """当前显示：手动临时图优先，否则为时段自动内容。"""
-    item = _display_meta()
+    item = display.current_meta()
     if item:
         return {"displaying": "manual", "item": item}
     return {"displaying": "auto", "item": None}
@@ -449,9 +373,10 @@ async def display_current():
 
 @router.get("/display/raw")
 async def display_raw():
-    if not DISPLAY_FILE.exists():
+    data = display.read_frame()
+    if not data:
         raise HTTPException(404, "no display image")
-    return Response(content=DISPLAY_FILE.read_bytes(), media_type="application/octet-stream")
+    return Response(content=data, media_type="application/octet-stream")
 
 
 @router.get("/display/preview")
@@ -461,19 +386,18 @@ async def display_preview():
     预览永远由原图而来（ADR-0001）：无原图（如直推的外部 FPS6 /
     校准图，本就无原图）→ 404，不做帧还原兜底。
     """
-    if not DISPLAY_FILE.exists():
+    if display.read_frame() is None:
         raise HTTPException(404, "no display image")
-    if DISPLAY_ORIG.exists():
-        return Response(content=DISPLAY_ORIG.read_bytes(), media_type="image/jpeg")
+    data = display.read_original_thumbnail()
+    if data is not None:
+        return Response(content=data, media_type="image/jpeg")
     raise HTTPException(404, "display original missing")
 
 
 @router.delete("/display/current")
 async def display_clear():
     """清除临时显示，恢复时段自动内容。"""
-    for p in (DISPLAY_FILE, DISPLAY_META, DISPLAY_ORIG):
-        if p.exists():
-            p.unlink()
+    display.clear()
     return {"ok": True}
 
 
@@ -481,23 +405,13 @@ async def display_clear():
 
 @router.get("/{img_id}/raw")
 async def get_raw(img_id: str):
-    if img_id.startswith("display-"):
-        # 内容指纹型 display id：设备按 id 拼 URL 下载，转发到临时显示图
-        # （display 源适配器待后续改造搬入注册表，双轨期保持原分支）
-        if not DISPLAY_FILE.exists():
-            raise HTTPException(404, "no display image")
-        return Response(content=DISPLAY_FILE.read_bytes(),
-                        media_type="application/octet-stream")
-    # 内容源注册表分发（ADR-0002）：daily-/weather-/free-/news- 前缀 → 源，
-    # 源服务「当前内容」（id 仅是内容指纹，不作查找键）
+    # 内容源注册表分发（ADR-0002）：五种内容源全部经注册表分发——
+    # display-/daily-/weather-/free-/news- 前缀各归其源，无前缀兑底
+    # 内容库（id 是查找键）。源服务「当前内容」，路由层不感知具体类型。
     source = content_sources.resolve(img_id)
-    if source:
-        data = source.render(img_id)
-        if not data:
-            raise HTTPException(404, source.missing_detail)
-        return Response(content=data, media_type="application/octet-stream")
-    meta = _get_or_404(img_id)
-    data = (UPLOAD_DIR / meta["fps6_path"]).read_bytes()
+    data = source.render(img_id)
+    if not data:
+        raise HTTPException(404, source.missing_detail)
     return Response(content=data, media_type="application/octet-stream")
 
 
@@ -646,7 +560,7 @@ async def content_list(device_id: str | None = None):
     source = ""
 
     # 临时显示（一次性上传切换）优先于一切时段内容
-    item = _display_meta()
+    item = display.current_meta()
     if item:
         result = [item]
         source = "display"

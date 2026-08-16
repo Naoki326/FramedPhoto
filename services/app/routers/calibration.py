@@ -12,10 +12,10 @@ import re
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from app import calibration
+from app import calibration, display
 from app.config import settings
 from app.epd_image import parse_fps6
-from app.routers import images as images_router
+from app.routers.images import _classify_fps6_error
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ def _validate_fps6(raw: bytes, expected: tuple[int, int] | None = None) -> tuple
     try:
         prepared = parse_fps6(raw, expected_size=expected)
     except ValueError as exc:
-        kind, actual = images_router._classify_fps6_error(str(exc))
+        kind, actual = _classify_fps6_error(str(exc))
         if kind == "magic":
             raise HTTPException(400, "不是有效的 FPS6 文件") from exc
         if kind == "size":
@@ -45,14 +45,8 @@ async def status():
 async def generate_and_push():
     """生成校准图，写入 display 通道直推设备（绕过量化）。"""
     raw = calibration.chart_fps6()
-    w, h = _validate_fps6(raw, (settings.epd_width, settings.epd_height))
-    images_router.DISPLAY_FILE.write_bytes(raw)
-    images_router.DISPLAY_META.write_text(__import__("json").dumps({
-        "filename": "calibration.fps6",
-        "landscape": 1,
-        "ts": images_router.db.now(),
-    }, ensure_ascii=False), encoding="utf-8")
-    meta = images_router._display_meta()
+    _validate_fps6(raw, (settings.epd_width, settings.epd_height))
+    meta = display.save_pushed_frame(raw, "calibration.fps6")
     return {"ok": True, "display": meta, **calibration.calibration_status()}
 
 
@@ -72,14 +66,8 @@ async def rainbow_preview():
 async def rainbow_push():
     """生成彩虹效果图并直推设备（走正常量化链路）。"""
     raw = calibration.rainbow_fps6()
-    w, h = _validate_fps6(raw, (settings.epd_width, settings.epd_height))
-    images_router.DISPLAY_FILE.write_bytes(raw)
-    images_router.DISPLAY_META.write_text(__import__("json").dumps({
-        "filename": "rainbow.fps6",
-        "landscape": 1,
-        "ts": images_router.db.now(),
-    }, ensure_ascii=False), encoding="utf-8")
-    return {"ok": True, "display": images_router._display_meta()}
+    _validate_fps6(raw, (settings.epd_width, settings.epd_height))
+    return {"ok": True, "display": display.save_pushed_frame(raw, "rainbow.fps6")}
 
 
 @router.post("/photo")

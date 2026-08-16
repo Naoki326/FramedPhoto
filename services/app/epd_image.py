@@ -642,6 +642,19 @@ def preview_png(prepared: PreparedImage) -> bytes:
     return buf.getvalue()
 
 
+def make_thumbnail(image_bytes: bytes, max_side: int = 500, quality: int = 80) -> bytes:
+    """原始图片 -> JPEG 缩略图字节（量化前原图缩放，省流量，ADR-0001）。
+
+    供各预览端点与置顶显示的原图缩略图落盘共用。
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 def is_landscape(image_bytes: bytes) -> bool:
     """源图（EXIF 摆正后）是否横屏。用于 Web 预览按横放视角摆正。"""
     img = Image.open(io.BytesIO(image_bytes))
