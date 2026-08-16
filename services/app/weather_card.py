@@ -735,7 +735,11 @@ def weather_original_png() -> bytes | None:
 
 
 def render_weather_slot() -> dict | None:
-    """对外入口：渲染天气卡片。返回 content 元数据或 None（无数据/不可用）。"""
+    """对外入口：渲染天气卡片，返回内容清单字段；不可用返回 None。
+
+    清单字段（含 memory_score/landscape）在此一次成型，不含 url/preview_url
+    ——源不负责 url（ADR-0002），清单 url 由路由层 helper 统一组装。
+    """
     data = render_weather_card()
     if not data:
         return None
@@ -746,10 +750,10 @@ def render_weather_slot() -> dict | None:
         "filename": "weather_card",
         "caption": f"天气 · {STYLE_LABELS.get(pick_style(), pick_style())}",
         "date": now.strftime("%Y.%m.%d"),
+        "memory_score": None,
         "width": 1200,
         "height": 1600,
-        "url": "/api/images/weather/raw",
-        "preview_url": "/api/images/weather/preview",
+        "landscape": 1,   # 卡片横屏
     }
 
 
@@ -767,19 +771,7 @@ class WeatherSource:
 
     def meta(self) -> dict | None:
         """确保当日卡片已渲染，返回内容清单字段；不可用返回 None。"""
-        m = render_weather_slot()
-        if not m:
-            return None
-        return {
-            "id": m["id"],
-            "filename": m.get("filename", ""),
-            "caption": m.get("caption", ""),
-            "date": m.get("date", ""),
-            "memory_score": None,
-            "width": m["width"],
-            "height": m["height"],
-            "landscape": 1,   # 卡片横屏
-        }
+        return render_weather_slot()
 
     def render(self, content_id: str) -> bytes | None:
         """当日天气卡片的 FPS6 帧（当日缓存 + 1 小时数据刷新）；不可用返回 None。"""

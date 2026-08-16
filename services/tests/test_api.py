@@ -91,7 +91,9 @@ def test_upload_and_content(monkeypatch):
     assert data["source"] == "daily"
     first = data["images"][0]
     assert first["id"].startswith("daily-")
-    assert first["url"] == "/api/images/daily/raw"
+    # url/preview_url 统一为 /{id}/raw|preview 形态（T5 #15）
+    assert first["url"] == f"/api/images/{first['id']}/raw"
+    assert first["preview_url"] == f"/api/images/{first['id']}/preview"
     assert first["filename"]
 
     # 上传图已自动进入照片库评分表（可被选片/手动设为今日精选）
@@ -901,3 +903,152 @@ def test_preview_generalized_from_original_not_frame():
     r_, g_, b_ = img.getpixel((img.width // 2, img.height // 2))
     assert r_ > 180 and b_ > 180 and g_ < 120, (r_, g_, b_)
     _clear_display()
+
+
+# ---------- 内容清单与当前显示改道（T5 #15：源 meta + url helper） ----------
+
+def _manifest_for(monkeypatch, case: str) -> tuple[dict, str]:
+    """按既有流程（置顶上传 / 桩外部依赖 / 时段配置 / 推送）产出某源的
+    /content 清单条目与 source 取值。"""
+    _clear_display()
+    if case == "display":
+        r = client.post("/api/images/display/upload",
+                        files={"file": ("disp.png", _png_bytes(1600, 1200, (198, 40, 40)), "image/png")})
+        assert r.status_code == 200, r.text
+    elif case == "content_push":
+        _set_single_slot("photo")
+        r = client.post("/api/images/upload",
+                        files={"file": ("pushed.png", _png_bytes(color=(90, 60, 200)), "image/png")})
+        assert r.status_code == 200, r.text
+        r = client.post("/api/images/content/push", json={"id": r.json()["id"]})
+        assert r.status_code == 200, r.text
+    elif case == "daily":
+        _set_single_slot("photo")
+        r = client.post("/api/images/upload",
+                        files={"file": ("contract.png", _png_bytes(color=(30, 90, 200)), "image/png")})
+        assert r.status_code == 200, r.text
+    elif case == "weather":
+        _mock_weather(monkeypatch)
+        _set_single_slot("weather")
+    else:
+        _mock_free_degrade(monkeypatch)
+        _set_single_slot("free")
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["images"], f"{case} 源应有当前内容"
+    return body["images"][0], body["source"]
+
+
+# 改道前逐字段的清单契约（对比基准：字段集与取值语义零变更）
+_MANIFEST_FIELD_SETS = {
+    "display": {"id", "filename", "landscape", "width", "height", "has_orig",
+                "url", "preview_url"},
+    "weather": {"id", "filename", "caption", "date", "memory_score",
+                "width", "height", "landscape", "url", "preview_url"},
+    "free": {"id", "filename", "caption", "date", "memory_score",
+             "width", "height", "landscape", "url", "preview_url"},
+    "content_push": {"id", "filename", "width", "height", "landscape",
+                     "created_at", "url", "preview_url"},
+    "daily": {"id", "filename", "caption", "date", "memory_score",
+              "width", "height", "landscape", "url", "preview_url"},
+}
+
+
+@pytest.mark.parametrize("case", sorted(_MANIFEST_FIELD_SETS))
+def test_content_manifest_fields_match_premigration_contract(monkeypatch, case):
+    """对比测试（T5 #15 验收 1/2）：五源清单条目字段集与 source 取值
+    与改道前逐字段一致；唯一差异是 url/preview_url 统一为 /{id}/raw|preview
+    形态，自由模块 url 无查询参数。"""
+    import re as _re
+    item, source = _manifest_for(monkeypatch, case)
+
+    assert source == case, (case, source)
+    assert set(item) == _MANIFEST_FIELD_SETS[case], \
+        f"{case}: 字段集与改道前不一致: {set(item) ^ _MANIFEST_FIELD_SETS[case]}"
+
+    # url/preview_url 统一为 /{id}/raw|preview 形态（自由模块 url 无 ?module=）
+    assert item["url"] == f"/api/images/{item['id']}/raw"
+    assert item["preview_url"] == f"/api/images/{item['id']}/preview"
+    assert "?" not in item["url"] and "?" not in item["preview_url"]
+
+    if case != "content_push":   # 内容库推送 id 无前缀（查找键）
+        assert item["id"].startswith(case + "-"), item["id"]
+
+    if case == "weather":
+        assert item["filename"] == "weather_card"
+        assert item["caption"].startswith("天气 ·")
+        assert item["memory_score"] is None
+        assert (item["width"], item["height"]) == (1200, 1600)
+        assert item["landscape"] == 1
+        assert _re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", item["date"])
+    elif case == "free":
+        assert item["filename"] == "free_module"
+        assert item["caption"]          # 模块名
+        assert item["memory_score"] is None
+        assert (item["width"], item["height"]) == (1200, 1600)
+        assert item["landscape"] == 1
+        assert _re.fullmatch(r"\d{4}\.\d{2}\.\d{2}", item["date"])
+    elif case == "display":
+        assert item["filename"] == "disp.png"
+        assert item["has_orig"] is True
+        assert (item["width"], item["height"]) == (1200, 1600)
+    elif case == "content_push":
+        assert item["filename"] == "pushed.png"
+        assert item["created_at"] is not None
+    else:   # daily
+        assert item["filename"]
+        assert isinstance(item["caption"], str)
+
+    if case == "display":
+        _clear_display()
+
+
+def test_display_current_item_urls_follow_id_form():
+    """「当前显示」查询（T5 #15 第二处调用）：消费源 meta + url helper，
+    item 字段集零变更，url/preview_url 统一为 /{id}/raw|preview 形态。"""
+    _clear_display()
+    r = client.post("/api/images/display/upload",
+                    files={"file": ("cur.png", _png_bytes(1600, 1200, _UNIQUE_RGB), "image/png")})
+    assert r.status_code == 200, r.text
+    content_id = r.json()["id"]
+
+    cur = client.get("/api/images/display/current")
+    assert cur.status_code == 200, cur.text
+    body = cur.json()
+    assert body["displaying"] == "manual"
+    item = body["item"]
+    assert set(item) == {"id", "filename", "landscape", "width", "height",
+                         "has_orig", "url", "preview_url"}
+    assert item["id"] == content_id
+    assert item["url"] == f"/api/images/{content_id}/raw"
+    assert item["preview_url"] == f"/api/images/{content_id}/preview"
+
+    # 新形态 url 实际可用：设备下载契约 + 预览由原图而来（泛化路由）
+    assert client.get(item["url"]).headers["content-type"] == "application/octet-stream"
+    assert client.get(item["preview_url"]).headers["content-type"].startswith("image/jpeg")
+    _clear_display()
+
+
+def test_device_flow_manifest_download_and_fingerprint_dedupe(monkeypatch):
+    """设备流程端到端（T5 #15 验收 4）：轮询清单 → 按 url 下载成功；
+    内容未变（指纹相同）不重复下载——id 语义仍是内容指纹，固件零改动。"""
+    from app.epd_image import parse_fps6
+    _mock_weather(monkeypatch)
+    _set_single_slot("weather")
+
+    last_id, downloaded = None, []
+    for _ in range(3):   # 设备多轮轮询（当日卡片缓存内内容不变）
+        r = client.get("/api/images/content")
+        assert r.status_code == 200, r.text
+        item = r.json()["images"][0]
+        if item["id"] == last_id:
+            continue   # 指纹相同：设备不重复下载（NVS 变更检测语义不变）
+        resp = client.get(item["url"])
+        assert resp.status_code == 200, (item["url"], resp.text)
+        assert resp.headers["content-type"] == "application/octet-stream"
+        prepared = parse_fps6(resp.content)
+        assert (prepared.width, prepared.height) == (1200, 1600)
+        downloaded.append(item["id"])
+        last_id = item["id"]
+    assert len(downloaded) == 1, f"内容未变不应重复下载: {downloaded}"

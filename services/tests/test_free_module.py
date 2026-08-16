@@ -132,12 +132,15 @@ def test_render_free_fps6_full_degrades_to_text_card():
 
 
 def test_render_free_slot_meta():
+    """清单字段由领域入口一次性产出（T5 #15）：无 url/preview_url
+    （源不负责 url，ADR-0002；清单 url 由路由层 helper 统一组装）。"""
     meta = fm.render_free_slot()
     assert meta is not None
     assert meta["id"].startswith("free-")
-    assert meta["url"] == "/api/images/free/raw"
-    assert meta["preview_url"] == "/api/images/free/preview"
     assert meta["caption"]  # 模块名
+    assert "url" not in meta and "preview_url" not in meta
+    assert meta["memory_score"] is None
+    assert meta["landscape"] == 1
 
 
 # ---------- 跨午夜时段：0 点不换图（同一连续 free 时段复用同一张卡） ----------

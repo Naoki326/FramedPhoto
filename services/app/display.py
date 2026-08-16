@@ -39,9 +39,10 @@ def current_meta() -> dict | None:
 
     帧头解读统一走 parse_fps6（内部自检口径，不校验尺寸）：
     DISPLAY_FILE 损坏不可解析时视同无置顶显示（回落时段自动内容）。
-    url/preview_url 指向既有固定端点，是管理台「当前显示」与内容清单
-    display 条目的既有形态；统一为 /{id}/raw|preview 形态由后续退役
-    改造承接（epic #10）。
+    url/preview_url 指向既有固定端点，仅作为置顶上传端点的返回字段
+    （固定路由退役前不变）；内容清单与「当前显示」查询不消费本函数的
+    url——改走源 meta() + 路由层 helper 统一为 /{id}/raw|preview 形态
+    （T5 #15，ADR-0002）。
     """
     if not DISPLAY_FILE.exists():
         return None

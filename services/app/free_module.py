@@ -634,9 +634,12 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
 
 
 def render_free_slot(module_name: str | None = None) -> dict | None:
-    """对外入口：渲染自由模块卡片 → content 元数据；不可用返回 None。
+    """对外入口：渲染自由模块卡片，返回内容清单字段；不可用返回 None。
 
     module_name 为时段块固定配置的模块名；None 则按轮换逻辑。
+    清单字段（含 memory_score/landscape）在此一次成型，不含
+    url/preview_url——源不负责 url（ADR-0002），清单 url 由路由层
+    helper 统一组装（/content 与 /display/current 两处调用）。
     """
     data = render_free_fps6(module_name=module_name)
     if not data:
@@ -650,10 +653,10 @@ def render_free_slot(module_name: str | None = None) -> dict | None:
         "filename": "free_module",
         "caption": name,
         "date": base.strftime("%Y.%m.%d"),
+        "memory_score": None,
         "width": DEVICE_WIDTH,
         "height": DEVICE_HEIGHT,
-        "url": "/api/images/free/raw",
-        "preview_url": "/api/images/free/preview",
+        "landscape": 1,   # 卡片横屏
     }
 
 
@@ -701,19 +704,7 @@ class FreeSource:
 
     def meta(self) -> dict | None:
         """确保当前卡片已生成，返回内容清单字段；不可用返回 None。"""
-        m = render_free_slot(module_name=current_module())
-        if not m:
-            return None
-        return {
-            "id": m["id"],
-            "filename": m.get("filename", ""),
-            "caption": m.get("caption", ""),
-            "date": m.get("date", ""),
-            "memory_score": None,
-            "width": m["width"],
-            "height": m["height"],
-            "landscape": 1,   # 卡片横屏
-        }
+        return render_free_slot(module_name=current_module())
 
     def render(self, content_id: str) -> bytes | None:
         """当前卡片的 FPS6 帧（与 /content 同一选模块逻辑）；不可用返回 None。"""

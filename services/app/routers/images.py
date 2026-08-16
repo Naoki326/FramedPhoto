@@ -361,10 +361,13 @@ async def display_upload_raw_fps6(file: UploadFile = File(...)):
 
 @router.get("/display/current")
 async def display_current():
-    """当前显示：手动临时图优先，否则为时段自动内容。"""
-    item = display.current_meta()
-    if item:
-        return {"displaying": "manual", "item": item}
+    """当前显示：手动临时图优先，否则为时段自动内容。
+
+    消费置顶显示源的元数据方法（meta()，ADR-0002），url/preview_url 由
+    模块级 helper _item_urls 统一组装为 /api/images/{id}/raw|preview 形态。"""
+    meta = display.SOURCE.meta()
+    if meta:
+        return {"displaying": "manual", "item": _item_urls(meta)}
     return {"displaying": "auto", "item": None}
 
 
@@ -491,8 +494,23 @@ async def delete_image(img_id: str):
     return {"ok": True, "deleted": img_id}
 
 
+def _item_urls(item: dict) -> dict:
+    """清单条目 url/preview_url 组装：唯一实现，仅 /content 与 /display/current
+    两处调用（ADR-0002：源不负责 url，故为路由层 helper 而非源方法）。
+
+    统一指向 /api/images/{id}/raw|preview——/{id}/raw 是转正的唯一设备
+    下载契约（五源经内容源注册表分发）；自由模块 url 不再带 ?module=
+    查询参数（源 render() 服务当前内容，与 /content 选同一模块）。
+    """
+    item["url"] = f"/api/images/{item['id']}/raw"
+    item["preview_url"] = f"/api/images/{item['id']}/preview"
+    return item
+
+
 def _content_pushed() -> dict | None:
-    """当日有效的内容库推送图；无则 None。"""
+    """当日有效的内容库推送图（清单条目，不含 url——由统一 helper 组装）；
+    无则 None。内容库进清单走注入机制而非源 meta()（内容库没有
+    「当前内容」概念，见 ADR-0002）。"""
     from app.runtime_config import load
     p = load().get("content_push") or {}
     if not p.get("id") or p.get("date") != datetime.now().strftime("%Y-%m-%d"):
@@ -507,8 +525,6 @@ def _content_pushed() -> dict | None:
         "height": m["height"],
         "landscape": m.get("landscape") or 0,
         "created_at": m.get("created_at"),
-        "url": f"/api/images/{m['id']}/raw",
-        "preview_url": f"/api/images/{m['id']}/preview",
     }
 
 
@@ -543,6 +559,10 @@ async def content_unpush():
 async def content_list(device_id: str | None = None):
     """内容清单：设备轮询此接口。
 
+    各分支消费内容源的元数据方法（meta()，ADR-0002），url/preview_url 由
+    模块级 helper _item_urls 统一组装为 /api/images/{id}/raw|preview 形态
+    （/{id}/raw 是唯一设备下载契约，五源经注册表分发）。
+
     优先级：临时显示（display，一次性上传切换）> 时段编排（见 app.slots，
     slot_segments 分段，未配置时兼容旧 slot_weather / slot_photo / slot_free）：
       weather 时段 → 天气+日历卡片（QWEATHER_KEY 未配/失败时回退照片）
@@ -550,81 +570,38 @@ async def content_list(device_id: str | None = None):
       free     时段 → 自由模块卡片（LLM+文生图每日生成；依赖未配置时回退照片）
     可附带设备 id 上报状态。
     """
-    from app import slots
-    from app.weather_card import render_weather_slot
+    from app import free_module, slots, weather_card
 
-    result = []
+    item = None
     source = ""
 
     # 临时显示（一次性上传切换）优先于一切时段内容
-    item = display.current_meta()
-    if item:
-        result = [item]
-        source = "display"
+    meta = display.SOURCE.meta()
+    if meta:
+        item, source = meta, "display"
     else:
         slot = slots.current_slot()
         source = slot
 
         if slot == slots.SLOT_WEATHER:
-            meta = render_weather_slot()
-            if meta:
-                result.append({
-                    "id": meta["id"],
-                    "filename": meta.get("filename", ""),
-                    "caption": meta.get("caption", ""),
-                    "date": meta.get("date", ""),
-                    "memory_score": None,
-                    "width": meta["width"],
-                    "height": meta["height"],
-                    "landscape": 1,  # 天气卡片横屏
-                    "url": "/api/images/weather/raw",
-                    "preview_url": "/api/images/weather/preview",
-                })
+            item = weather_card.SOURCE.meta()
         elif slot == slots.SLOT_FREE:
-            from app.free_module import render_free_slot
-            seg = slots.current_segment()
-            mod = (seg or {}).get("module")
-            meta = render_free_slot(module_name=mod)
-            if meta:
-                qs = f"?module={quote(mod)}" if mod else ""
-                result.append({
-                    "id": meta["id"],
-                    "filename": meta.get("filename", ""),
-                    "caption": meta.get("caption", ""),
-                    "date": meta.get("date", ""),
-                    "memory_score": None,
-                    "width": meta["width"],
-                    "height": meta["height"],
-                    "landscape": 1,  # 自由模块卡片横屏
-                    "url": "/api/images/free/raw" + qs,
-                    "preview_url": "/api/images/free/preview" + qs,
-                })
+            item = free_module.SOURCE.meta()
 
-        if not result:
-            # 照片时段，或天气/新闻不可用时的回退。
+        if item is None:
+            # 照片时段，或天气/自由模块不可用时的回退。
             # 照片时段优先级：内容库「推送到显示」的图 > 手动指定今日精选 > 每日精选。
             # 内容库未推送的图只入库不上屏（须在内容库点「推送到显示」才上屏）。
             if slot == slots.SLOT_PHOTO:
                 pushed = _content_pushed()
                 if pushed:
-                    result.append(pushed)
-                    source = "content_push"
-            if not result:
-                meta = daily.ensure_daily()
+                    item, source = pushed, "content_push"
+            if item is None:
+                meta = daily.SOURCE.meta()
                 if meta:
-                    source = "daily"
-                    result.append({
-                        "id": meta.get("id", "daily"),
-                        "filename": meta.get("filename", ""),
-                        "caption": meta.get("caption", ""),
-                        "date": meta.get("date", ""),
-                        "memory_score": meta.get("memory_score"),
-                        "width": meta["width"],
-                        "height": meta["height"],
-                        "landscape": meta.get("landscape") or 0,
-                        "url": "/api/images/daily/raw",
-                        "preview_url": "/api/images/daily/preview",
-                    })
+                    item, source = meta, "daily"
+
+    result = [_item_urls(item)] if item else []
 
     # 设备附带上报心跳（与 /heartbeat 等价，减少一次请求）
     if device_id:
