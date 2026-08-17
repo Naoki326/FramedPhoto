@@ -6,6 +6,9 @@ ADR-0002 退役前置：管理台不再引用任何固定 raw/preview 路由—�
 
 B3（#21）：api() helper 独立成 web/api.js 并被页面以 script 标签引用
 （expand 步：与内联旧 api() 并存，不迁移调用点）。
+
+B5（#23）：裸 fetch 全量迁移——内联旧 api() 删除、页面统一走 fpApi.api，
+内容清单改共享单次请求；错误归一样板不再各调用点抄一份。
 """
 from pathlib import Path
 
@@ -63,3 +66,28 @@ def test_api_js_served_as_javascript():
     assert r.status_code == 200
     assert "javascript" in r.headers["content-type"]
     assert r.text == API_JS.read_text("utf-8")
+
+
+def test_webui_no_bare_fetch():
+    """B5：管理台脚本不得裸调 fetch()，一律走 web/api.js 的 api()。
+
+    错误归一样板（读 detail、回退状态文本）只允许住在 api.js 一份。
+    """
+    html = INDEX.read_text("utf-8")
+    assert "fetch(" not in html, "管理台脚本不得出现裸 fetch，HTTP 调用一律走 api()"
+
+
+def test_webui_uses_fpapi_and_drops_inline_api():
+    """B5：页面绑定 api.js 暴露的 fpApi.api，内联旧 api() 定义删除。"""
+    html = INDEX.read_text("utf-8")
+    assert "fpApi.api" in html, "页面须使用 api.js 暴露的 fpApi.api"
+    assert "async function api(path, opts)" not in html, "内联旧 api() 定义应删除"
+
+
+def test_webui_content_manifest_single_request_call_site():
+    """B5：内容清单请求收口为共享 helper 一处，两个面板消费同一份请求。"""
+    html = INDEX.read_text("utf-8")
+    assert html.count("api('/images/content')") == 1, (
+        "内容清单 api() 调用点应唯一（共享单次请求 helper），"
+        "面板各自直接请求的形态应消失"
+    )

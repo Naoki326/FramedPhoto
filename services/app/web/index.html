@@ -378,10 +378,18 @@
 <script>
 const $ = id => document.getElementById(id);
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2500); }
-async function api(path, opts) {
-  const r = await fetch('/api' + path, opts);
-  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-  return r.json();
+// 加深后的 api()（web/api.js）：/api 前缀与绝对路径、JSON/blob 响应、
+// 统一错误归一（detail 优先 → 状态文本 → HTTP <status>）只有这一份
+const api = fpApi.api;
+
+/* ---- 内容清单：两个面板单次请求共享 ----
+ * 页面载入时「当前显示」与「每日精选」同时起跑、各自定时刷新撞到同一拍时，
+ * 并发调用合并为同一 in-flight 请求；请求结束即清空，下一次调用重新发起
+ * —— 各面板自己的刷新节奏（60s / 600s）与迁移前一致。 */
+let contentReq = null;
+function fetchContent() {
+  if (!contentReq) contentReq = api('/images/content').finally(() => { contentReq = null; });
+  return contentReq;
 }
 function timeAgo(ts) {
   if (!ts) return '—';
@@ -415,8 +423,7 @@ async function loadDisplay() {
       $('displayClearBtn').style.display = '';
       return;
     }
-    const r = await fetch('/api/images/content');
-    const { images, source } = await r.json();
+    const { images, source } = await fetchContent();
     if (images.length) {
       const it = images[0];
       img.style.display = '';
@@ -465,13 +472,12 @@ async function refreshFree() {
 }
 
 async function loadHealth() {
-  try { const h = await (await fetch('/health')).json(); $('health').textContent = `EPD ${h.epd} · ok`; } catch (_) {}
+  try { const h = await api('/health', { absolute: true }); $('health').textContent = `EPD ${h.epd} · ok`; } catch (_) {}
 }
 async function loadDaily() {
   const box = $('daily');
   try {
-    const r = await fetch('/api/images/content');
-    const { images, source } = await r.json();
+    const { images, source } = await fetchContent();
     if (!images.length || source !== 'daily') {
       box.innerHTML = '<div class="empty">当前未显示每日精选（设备显示：' + (SOURCE_NAMES[source] || source || '—') + '；上传图片或运行照片分析后自动生成）</div>';
       return;
@@ -493,8 +499,7 @@ async function loadScores() {
   const box = $('scores');
   try {
     // 管理台照片库应展示全部已分析照片（API 上限 500），而不是只显示前 60 张
-    const r = await fetch('/api/analysis/scores?limit=500');
-    const { scores } = await r.json();
+    const { scores } = await api('/analysis/scores?limit=500');
     if (!scores.length) { box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>'; return; }
     box.innerHTML = scores.map(s => `
       <div class="card">
@@ -543,8 +548,7 @@ async function loadSync() {
   const box = $('syncbox');
   const btn = $('syncStartBtn');
   try {
-    const r = await fetch('/api/sync/status');
-    const s = await r.json();
+    const s = await api('/sync/status');
     btn.disabled = (s.status === 'running' || s.status === 'stale');
     const fmt = b => b >= 1024**3 ? (b/1024**3).toFixed(2)+' GB' : (b/1024**2).toFixed(0)+' MB';
     const fmtRate = k => k >= 1024 ? (k/1024).toFixed(2)+' MB/s' : k.toFixed(1)+' KB/s';
@@ -1001,12 +1005,7 @@ const CITY_ID_MAP = {
 
 async function resolveCityToLocation(name) {
   if (CITY_ID_MAP[name]) return CITY_ID_MAP[name];
-  const res = await fetch(`/api/weather/lookup?location=${encodeURIComponent(name)}`);
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    throw new Error(e.detail || `城市“${name}”未找到`);
-  }
-  const j = await res.json();
+  const j = await api(`/weather/lookup?location=${encodeURIComponent(name)}`);
   if (!j.location || !j.location.length) throw new Error(`城市“${name}”未找到，可改用城市 ID（如 101020300）`);
   const best = j.location[0];
   const adm1 = best.adm1 || '';
@@ -1079,18 +1078,14 @@ async function calUpload(markedOnly) {
     const fd = new FormData();
     fd.append('file', f);
     if (markedOnly) {
-      const r = await fetch('/api/calibration/photo/marked', { method: 'POST', body: fd });
-      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-      const blob = await r.blob();
+      const blob = await api('/calibration/photo/marked', { method: 'POST', body: fd, blob: true });
       const img = $('calMarked');
       img.src = URL.createObjectURL(blob);
       img.style.display = '';
       $('calMarkedTip').textContent = '红色采样框应分别落在六条色带的中央区域；位置不对请重新拍摄（或换一张更正面、更占满画面的照片）。';
       return;
     }
-    const r = await fetch('/api/calibration/photo', { method: 'POST', body: fd });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-    const j = await r.json();
+    const j = await api('/calibration/photo', { method: 'POST', body: fd });
     toast('校准已应用并热加载生效');
     renderCalStatus(j.status);
     loadDisplay();
@@ -1154,9 +1149,7 @@ $('calPickPhoto') && ($('calPickPhoto').addEventListener('change', async (e) => 
   try {
     const fd = new FormData();
     fd.append('file', f);
-    const r = await fetch('/api/calibration/photo?mode=pick', { method: 'POST', body: fd });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
-    const blob = await r.blob();
+    const blob = await api('/calibration/photo?mode=pick', { method: 'POST', body: fd, blob: true });
     const rd = new FileReader();
     rd.onload = () => { calPickB64 = rd.result.split(',')[1]; };
     rd.readAsDataURL(blob);
@@ -1176,12 +1169,10 @@ $('calPickImg') && ($('calPickImg').addEventListener('click', async (e) => {
   const x = (e.clientX - rect.left) / rect.width;
   const y = (e.clientY - rect.top) / rect.height;
   try {
-    const r = await fetch('/api/calibration/pick/color', {
+    const j = await api('/calibration/pick/color', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ photo_b64: calPickB64, x, y }),
     });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
-    const j = await r.json();
     calManual[calPickIdx] = j.color;
     renderCalManual();
     calPickIdx = (calPickIdx + 1) % 6;
@@ -1192,12 +1183,10 @@ $('calPickImg') && ($('calPickImg').addEventListener('click', async (e) => {
 async function calManualSave() {
   const btn = $('calManualSaveBtn'); btn.disabled = true;
   try {
-    const r = await fetch('/api/calibration/device', {
+    const j = await api('/calibration/device', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device: calManual }),
     });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
-    const j = await r.json();
     toast('人眼匹配校准已应用并热加载生效');
     renderCalStatus(j.status);
     loadDisplay();
