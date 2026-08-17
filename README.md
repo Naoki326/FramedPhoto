@@ -285,6 +285,12 @@ source .venv/bin/activate
 pytest
 ```
 
+管理台 `api()` helper 契约测试（node 内置 test runner，零 npm 依赖）：
+
+```bash
+node --test "services/app/web/*.test.js"   # 自仓库根目录运行
+```
+
 ## 隐私说明
 
 这是一个公开仓库，但以下内容只保留在本地，不会进入 Git：

@@ -3,10 +3,22 @@
 ADR-0002 退役前置：管理台不再引用任何固定 raw/preview 路由——
 「✨ 重新生成今日自由模块」按钮走 POST /api/images/free/regenerate，
 每日精选面板图片来自内容清单返回的 preview_url。
+
+B3（#21）：api() helper 独立成 web/api.js 并被页面以 script 标签引用
+（expand 步：与内联旧 api() 并存，不迁移调用点）。
 """
 from pathlib import Path
 
-INDEX = Path(__file__).resolve().parents[2] / "services" / "app" / "web" / "index.html"
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
+
+_WEB = Path(__file__).resolve().parents[2] / "services" / "app" / "web"
+INDEX = _WEB / "index.html"
+API_JS = _WEB / "api.js"
+
+client = TestClient(app)
 
 # ADR-0002 待退役的 10 条固定 raw/preview 路由
 # （每日精选/旧称新闻/自由模块/天气/置顶显示 × raw/preview）
@@ -37,3 +49,17 @@ def test_webui_daily_panel_uses_manifest_preview_url():
     """每日精选面板图片来自内容清单条目的 preview_url，不再硬编码固定预览。"""
     html = INDEX.read_text("utf-8")
     assert 'src="${m.preview_url}"' in html, "每日精选面板图片须用清单返回的 preview_url"
+
+
+def test_webui_references_api_script():
+    """管理台页面以 script 标签引用独立 api() 脚本（B3 seam 落地）。"""
+    html = INDEX.read_text("utf-8")
+    assert '<script src="/api.js"></script>' in html, "页面须引用 /api.js 独立脚本"
+
+
+def test_api_js_served_as_javascript():
+    """GET /api.js 分发脚本本体（text/javascript，内容与 web/api.js 一致）。"""
+    r = client.get("/api.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    assert r.text == API_JS.read_text("utf-8")

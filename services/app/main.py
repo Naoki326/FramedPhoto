@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.config import settings
 from app.routers import analysis, calibration, devices, images, ota, sync
@@ -53,6 +53,13 @@ app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 async def index():
     html = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(content=html)
+
+
+@app.get("/api.js", tags=["web"])
+async def api_js():
+    """管理台 api() helper（#21 独立 seam，页面以 <script src> 引用）。"""
+    return FileResponse(Path(__file__).parent / "web" / "api.js",
+                        media_type="text/javascript")
 
 
 @app.get("/health", tags=["meta"])
