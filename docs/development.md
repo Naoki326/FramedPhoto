@@ -19,6 +19,9 @@ idf.py -p /dev/cu.usbserial-XXXX flash monitor
 
 或直接用 `./scripts/flash.sh`。
 
+固件 `http_util` 传输层有宿主机 C 测试（无需 ESP-IDF 环境与真机，需 managed_components
+已拉取）：`make -C firmware/host_tests`。
+
 ## 服务端开发循环
 
 ```bash

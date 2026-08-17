@@ -291,6 +291,12 @@ pytest
 node --test "services/app/web/*.test.js"   # 自仓库根目录运行
 ```
 
+固件 `http_util` 传输层宿主机 C 测试（脱离 ESP-IDF 运行时，需 managed_components 已拉取）：
+
+```bash
+make -C firmware/host_tests   # 编译 + 运行，可用 ASan 检泄漏
+```
+
 ## 隐私说明
 
 这是一个公开仓库，但以下内容只保留在本地，不会进入 Git：

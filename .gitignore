@@ -16,6 +16,8 @@ firmware/sdkconfig.defaults.old
 firmware/dependencies.lock
 firmware/managed_components/
 firmware/.build/
+firmware/host_tests/test_http_util
+firmware/host_tests/test_http_util.dSYM
 
 # --- Python / 服务端 ---
 services/.venv/
