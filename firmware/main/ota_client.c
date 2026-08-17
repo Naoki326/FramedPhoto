@@ -3,87 +3,33 @@
  *
  * 流程（每次内容轮询 / 按钮唤醒时随 update_from_server 调用）：
  *   1. GET /api/ota/manifest?device_id=<id>&current_version=<运行版本>
+ *      （设备 id 见 device_id.h；manifest 解析是本 client 的协议职责，
+ *      传输管道在 http_util）
  *      服务端判定无新固件 → 返回 ESP_ERR_NOT_FOUND，不打扰正常显示
  *   2. 有新固件 → 打开非活动 OTA 分区，流式下载（esp_http_client 事件
- *      模式逐块 esp_ota_write），同时 mbedtls_sha256 逐块计算
+ *      模式逐块 esp_ota_write，哈希/分区写入是本 client 的协议职责），
+ *      同时 mbedtls_sha256 逐块计算
  *   3. 校验 sha256 + esp_ota_end（app 镜像头校验）→ 设置启动分区 → 重启
  *   4. 新固件启动后 ota_client_init() 标记有效（rollback 确认）；
  *      若新固件崩溃重启，bootloader 自动回滚旧分区
  */
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include "esp_check.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_http_client.h"
-#include "esp_mac.h"
 #include "esp_partition.h"
 #include "psa/crypto.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "device_id.h"
+#include "http_util.h"
 #include "ota_client.h"
 
 static const char *TAG = "ota";
 
-#define HTTP_TIMEOUT_MS    60000  /* 1MB+ 固件下载放宽超时 */
 #define SHA256_HEX_LEN     64
-
-/* ---------------- 设备 id（与 device_client 一致：MAC 派生） ---------------- */
-
-static void device_id(char *out, size_t len)
-{
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(out, len, "esp32s3-%02x%02x%02x", mac[3], mac[4], mac[5]);
-}
-
-/* ---------------- 响应收集 ---------------- */
-
-typedef struct {
-    char *body;
-    size_t len;
-    size_t cap;
-} collect_ctx_t;
-
-static void collect_free(collect_ctx_t *c)
-{
-    if (c->body) {
-        free(c->body);
-        c->body = NULL;
-    }
-    c->len = c->cap = 0;
-}
-
-static esp_err_t collect_append(collect_ctx_t *c, const char *data, int len)
-{
-    if (c->len + (size_t)len + 1 > c->cap) {
-        size_t ncap = c->cap ? c->cap * 2 : 512;
-        while (c->len + (size_t)len + 1 > ncap) {
-            ncap *= 2;
-        }
-        char *nb = realloc(c->body, ncap);
-        if (!nb) {
-            return ESP_ERR_NO_MEM;
-        }
-        c->body = nb;
-        c->cap = ncap;
-    }
-    memcpy(c->body + c->len, data, len);
-    c->len += len;
-    c->body[c->len] = '\0';
-    return ESP_OK;
-}
-
-static esp_err_t manifest_handler(esp_http_client_event_t *evt)
-{
-    collect_ctx_t *c = (collect_ctx_t *)evt->user_data;
-    if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
-        return collect_append(c, evt->data, evt->data_len);
-    }
-    return ESP_OK;
-}
 
 /* ---------------- manifest 检查 ---------------- */
 
@@ -101,34 +47,12 @@ static esp_err_t fetch_manifest(const char *current_ver,
              "%s/api/ota/manifest?device_id=%s&current_version=%s",
              CONFIG_FRAMEDPHOTO_SERVER_URL, id, current_ver);
 
-    collect_ctx_t ctx = { 0 };
-    esp_http_client_config_t cfg = {
-        .url = url,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-        .event_handler = manifest_handler,
-        .user_data = &ctx,
-        .keep_alive_enable = false,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) {
-        return ESP_ERR_NO_MEM;
-    }
-    esp_err_t err = esp_http_client_perform(client);
-    esp_http_client_cleanup(client);
-    if (err != ESP_OK || !ctx.body) {
-        ESP_LOGE(TAG, "manifest request failed: %s (body=%s)",
-                 esp_err_to_name(err), ctx.body ? ctx.body : "<empty>");
-        collect_free(&ctx);
-        return err != ESP_OK ? err : ESP_ERR_INVALID_RESPONSE;
-    }
-
-    ESP_LOGW(TAG, "manifest raw body [%u]: %.300s", (unsigned)ctx.len,
-             ctx.body ? ctx.body : "<empty>");
-    cJSON *root = cJSON_Parse(ctx.body);
-    collect_free(&ctx);
+    /* OTA 现有最宽超时 60s 保留（1MB+ 固件链路，作参数传入 http_util） */
+    esp_err_t err = ESP_OK;
+    cJSON *root = http_util_get_json(url, 60000, &err);
     if (!root) {
-        ESP_LOGE(TAG, "manifest json parse failed");
-        return ESP_ERR_INVALID_RESPONSE;
+        ESP_LOGE(TAG, "manifest request failed: %s", esp_err_to_name(err));
+        return err;
     }
 
     esp_err_t ret = ESP_ERR_NOT_FOUND;
@@ -199,7 +123,7 @@ static esp_err_t download_ota(const esp_partition_t *part, size_t expected_size,
 
     esp_http_client_config_t cfg = {
         .url = url,
-        .timeout_ms = HTTP_TIMEOUT_MS,
+        .timeout_ms = 60000, /* 1MB+ 固件下载放宽超时（OTA 现有最宽档） */
         .event_handler = ota_download_handler,
         .user_data = &ctx,
         .keep_alive_enable = false,
