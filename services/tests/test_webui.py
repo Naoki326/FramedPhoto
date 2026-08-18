@@ -11,6 +11,7 @@ B5（#23）：裸 fetch 全量迁移——内联旧 api() 删除、页面统一�
 内容清单改共享单次请求；错误归一样板不再各调用点抄一份。
 """
 from pathlib import Path
+import re
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -55,9 +56,11 @@ def test_webui_daily_panel_uses_manifest_preview_url():
 
 
 def test_webui_references_api_script():
-    """管理台页面以 script 标签引用独立 api() 脚本（B3 seam 落地）。"""
+    """管理台页面以带版本参数的 script 标签引用独立 api() 脚本（B3 seam 落地；
+    版本参数破浏览器启发式缓存，api.js 响应无 ETag/Last-Modified）。"""
     html = INDEX.read_text("utf-8")
-    assert '<script src="/api.js"></script>' in html, "页面须引用 /api.js 独立脚本"
+    assert re.search(r'<script src="/api\.js\?v=\d+"></script>', html), \
+        "页面须以 /api.js?v=N 引用独立脚本（版本号随 api.js 内容变更递增）"
 
 
 def test_api_js_served_as_javascript():

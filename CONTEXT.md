@@ -27,6 +27,11 @@ _Avoid_: 源图、底图、母图
 
 ### 管理台
 
+**部署前缀 (Deploy Base)**:
+管理台页面被前缀代理部署时（如 /apps/frame/）的 URL 前缀；
+api() 从自身 script src 推导，代理层不做 JS 内容重写。
+_Avoid_: base path、上下文路径
+
 **预览 (Preview)**:
 管理台查看某内容图像的功能；永远由原图缩放而来。
 不存在由 FPS6 帧还原出的预览。
