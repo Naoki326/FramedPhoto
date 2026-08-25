@@ -55,6 +55,14 @@
 | GET | `/api/settings` | 当前生效配置（时段编排 / 天气 / 自由模块）+ 状态（IP 定位城市、当前时段、今日自由模块） |
 | PUT | `/api/settings` | 保存配置（即时生效，写入 `runtime_config.json`）；天气相关设置变化会自动清理天气缓存 |
 | GET | `/api/weather/lookup?location=宝山` | 中文城市名 → 和风 location 列表（管理台城市输入框保存时自动调用） |
+| GET | `/api/calibration` | 校准状态（六色采样值 / 是否已校准 / 浓彩偏置 chroma_bias） |
+| POST | `/api/calibration/generate` | 生成校准图并直推设备（nibble 直写，绕过量化） |
+| GET | `/api/calibration/chart` | 校准图 PNG 预览（横放视角） |
+| POST | `/api/calibration/photo` | 上传校准照片 → 采样六色 → 写 calibrated.json 热加载 |
+| GET | `/api/calibration/rainbow` | 彩虹效果图 PNG 预览（正常量化链路） |
+| POST | `/api/calibration/rainbow/push` | 生成彩虹效果图并直推设备（含浓彩偏置） |
+| PUT | `/api/calibration/chroma-bias` | 设置浓彩偏置 `{"value": 0..4}`（0=忠实混色，ADR-0004） |
+| DELETE | `/api/calibration` | 清除校准，恢复默认占位色 |
 
 ### 天气城市设置
 

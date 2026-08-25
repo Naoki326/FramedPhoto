@@ -282,14 +282,207 @@ def _nearest_index(rgb: tuple[int, int, int],
     raise ValueError(f"unknown distance {distance!r}")
 
 
+# ---- 色域外高饱和色的墨水对混色（彩虹图白色块修复，ADR-0004）----
+# 校准后的墨水普遍比理想色板暗（唯一亮彩墨是黄），亮青/亮品红这类色域外
+# 高饱和色在「最近墨水」判定下（RGB/OKLab 皆然）必然命中唯一的亮墨——白，
+# 整块退化为白色（实测彩虹图青/品红块白墨 83~96%）。修复：最近墨水为
+# 黑/白且像素饱和度超过 CHROMA_SAT_GATE 时，改用「最近墨水对」最小二乘
+# 混合解（纯青 → 白59%+蓝41%，天空 → 白79%+蓝21%），FS 误差扩散自动
+# 实现该比例；浓彩偏置 chroma_bias>0 时把实现比例进一步推向彩色端点。
+
+CHROMA_SAT_GATE = 0.35   # 触发墨水对混色的饱和度门槛（(max-min)/max）
+MAX_CHROMA_BIAS = 4.0    # 浓彩偏置上限（管理台滑杆范围）
+
+
+def _saturation(r: float, g: float, b: float) -> float:
+    mx, mn = max(r, g, b), min(r, g, b)
+    return 0.0 if mx == 0 else (mx - mn) / mx
+
+
+_HULL_CACHE: dict[tuple, list[tuple[tuple[float, float, float], float]]] = {}
+
+
+def _hull_facets(targets: tuple[tuple[int, int, int], ...]):
+    """墨水凸包的面方程（一次预计算，按 targets 缓存）。
+
+    6 个顶点最多 8 个面；每个面存外法线 n 与偏移 d（面上 n·p = d，
+    包内 n·p <= d）。色域内颜色交给原有 6 墨涌现式混色（保真更好），
+    只有色域外颜色才需要墨水对干预。
+    """
+    key = tuple(targets)
+    cached = _HULL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    facets = []
+    for a in range(6):
+        for b in range(a + 1, 6):
+            for c in range(b + 1, 6):
+                pa, pb, pc = targets[a], targets[b], targets[c]
+                ux, uy, uz = pb[0]-pa[0], pb[1]-pa[1], pb[2]-pa[2]
+                vx, vy, vz = pc[0]-pa[0], pc[1]-pa[1], pc[2]-pa[2]
+                nx, ny, nz = uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx
+                if nx*nx + ny*ny + nz*nz < 1e-9:
+                    continue
+                d = nx*pa[0] + ny*pa[1] + nz*pa[2]
+                rest = [targets[k] for k in range(6) if k not in (a, b, c)]
+                vals = [nx*p[0] + ny*p[1] + nz*p[2] for p in rest]
+                if all(v <= d + 1e-6 for v in vals):
+                    facets.append(((nx, ny, nz), d))
+                elif all(v >= d - 1e-6 for v in vals):
+                    facets.append(((-nx, -ny, -nz), -d))
+    _HULL_CACHE[key] = facets
+    return facets
+
+
+def _outside_hull(rgb: tuple[float, float, float],
+                  targets: tuple[tuple[int, int, int], ...]) -> bool:
+    """颜色是否在墨水凸包之外（任一面被违反即在外）。"""
+    for (nx, ny, nz), d in _hull_facets(targets):
+        if nx*rgb[0] + ny*rgb[1] + nz*rgb[2] > d + 1e-6:
+            return True
+    return False
+
+
+def _best_pair(rgb: tuple[float, float, float],
+               targets: tuple[tuple[int, int, int], ...],
+               require_chromatic: bool = False) -> tuple[int, int, float]:
+    """最小二乘墨水对混合解：返回 (i, j, lam)，mix = j + lam*(i - j)。
+
+    在全部 21 个墨水对（含 i==j 单色特例）中选残差最小者；同残差时取
+    彩色端点更近者（避免 λ 截断平局时任意命中黑白/黄色）。单色是
+    墨水对的 λ=0/1 特例，残差不会劣于最近单墨水；混合则把色域外颜色
+    显式分解为两种墨水的抖动比例，而不是交给最近墨水的隐性误差反馈。
+    require_chromatic=True（饱和色干预用）：候选对必须含彩色墨水——
+    否则色域外漂移色的最优解会退化成黑白对，色相全失。
+    """
+    best = None   # (res2, cdist, i, j, lam)
+    r, g, b = rgb
+    for i in range(6):
+        pi = targets[i]
+        for j in range(i, 6):
+            if require_chromatic and i <= 1 and j <= 1:
+                continue
+            pj = targets[j]
+            dx, dy, dz = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+            dd = dx * dx + dy * dy + dz * dz
+            if dd == 0:
+                lam = 1.0
+            else:
+                lam = ((r - pj[0]) * dx + (g - pj[1]) * dy + (b - pj[2]) * dz) / dd
+                lam = max(0.0, min(1.0, lam))
+            ex = pj[0] + lam * dx - r
+            ey = pj[1] + lam * dy - g
+            ez = pj[2] + lam * dz - b
+            res2 = ex * ex + ey * ey + ez * ez
+            # 彩色端点距离（平局决胜；两端均彩色取近者）
+            ci = None if i <= 1 else (pi[0]-r)**2 + (pi[1]-g)**2 + (pi[2]-b)**2
+            cj = None if j <= 1 else (pj[0]-r)**2 + (pj[1]-g)**2 + (pj[2]-b)**2
+            cdist = min(c for c in (ci, cj) if c is not None) if (ci is not None or cj is not None) else 0.0
+            key = (res2, cdist)
+            if best is None or key < (best[0], best[1]):
+                best = (res2, cdist, i, j, lam)
+    return best[2], best[3], best[4]
+
+
+_PLAN_CACHE: dict[tuple, tuple | None] = {}
+
+
+def _intervention_plan(r0: float, g0: float, b0: float,
+                       targets: tuple[tuple[int, int, int], ...]):
+    """源色 -> 干预方案（按 8 级/通道分桶缓存，桶内用桶中心色计算）。
+
+    方案：None（色域内，不干预）或
+    (a, c, mixed, lam_c, ddx, ddy, ddz, dd)：a/c 为黑白端/彩色端索引，
+    mixed 表示恰一端黑白（偏置参与），lam_c 彩色份额，(dd*) 墨水对轴向量。
+    凸包判定 + 21 个墨水对最小二乘每桶只算一次，逐像素只做投影判定，
+    避免逐像素重算把全图渲染拖慢近一个量级。
+    """
+    key = (targets, int(r0) >> 3, int(g0) >> 3, int(b0) >> 3)
+    if key in _PLAN_CACHE:
+        return _PLAN_CACHE[key]
+    center = (((int(r0) >> 3) << 3) + 4,
+              ((int(g0) >> 3) << 3) + 4,
+              ((int(b0) >> 3) << 3) + 4)
+    if not _outside_hull(center, targets):
+        plan = None
+    else:
+        i, j, lam = _best_pair(center, targets, require_chromatic=True)
+        if i == j:
+            plan = (i, i, False, 1.0, 0.0, 0.0, 0.0, 0.0)
+        else:
+            a, c = (i, j) if i <= 1 else (j, i)
+            lam_c = (1.0 - lam) if a == i else lam
+            mixed = (i <= 1) != (j <= 1)
+            va, vc = targets[a], targets[c]
+            ddx, ddy, ddz = vc[0] - va[0], vc[1] - va[1], vc[2] - va[2]
+            dd = ddx * ddx + ddy * ddy + ddz * ddz
+            plan = (a, c, mixed, lam_c, ddx, ddy, ddz, dd)
+    _PLAN_CACHE[key] = plan
+    return plan
+
+
+def _pick_ink(r0: float, g0: float, b0: float,
+              r2: float, g2: float, b2: float,
+              targets: tuple[tuple[int, int, int], ...],
+              chroma_bias: float = 0.0) -> tuple[int, float, float, float]:
+    """量化取墨，返回 (墨水索引, 有效量化基准色)。
+
+    最近墨水为彩色时：直接返回（基准 = 调整后像素）。
+    命中黑/白且源像素饱和度超过 CHROMA_SAT_GATE 且在墨水凸包之外时
+    （色域外亮色，曾整块退化为白）：改用墨水对混合——
+      - 墨水对方案由源色分桶缓存（_intervention_plan）；
+      - 浓彩偏置把目标彩色份额 λ_c 放大为 λ_c·(1+bias·sat)；
+      - 量化基准改为轴上虚拟源 v0 = a + λ_c_eff·(c-a)，误差只在轴上
+        传播——1D FS 占空比精确实现 λ_c_eff，且垂直分量不再发散。
+    """
+    idx = _nearest_index((r2, g2, b2), targets, "rgb")
+    if idx > 1:
+        return idx, r2, g2, b2
+    sat = _saturation(r0, g0, b0)
+    if sat <= CHROMA_SAT_GATE:
+        return idx, r2, g2, b2
+    plan = _intervention_plan(r0, g0, b0, targets)
+    if plan is None:
+        # 色域内的亮饱和色：6 墨涌现式混色（FS 误差反馈）平均保真更好，
+        # 不干预；只有色域外颜色（如纯青/品红，曾在最近墨水判定下整块
+        # 退化为白）才需要墨水对混色。
+        return idx, r2, g2, b2
+    a, c, mixed, lam_c, ddx, ddy, ddz, dd = plan
+    if dd == 0.0:
+        return a, r2, g2, b2
+    lam_c_eff = min(1.0, lam_c * (1.0 + chroma_bias * sat)) if mixed else lam_c
+    va = targets[a]
+    # 轴上虚拟源（含漂移）：占空比目标 λ_c_eff，误差沿轴反馈
+    vr = va[0] + lam_c_eff * ddx + (r2 - r0)
+    vg = va[1] + lam_c_eff * ddy + (g2 - g0)
+    vb = va[2] + lam_c_eff * ddz + (b2 - b0)
+    proj = ((vr - va[0]) * ddx + (vg - va[1]) * ddy + (vb - va[2]) * ddz) / dd
+    pick = c if proj > 0.5 else a
+    return pick, vr, vg, vb
+
+
+def _effective_chroma_bias(value: float | None) -> float:
+    """解析浓彩偏置：显式传值优先（测试/工具隔离），否则读运行时配置。"""
+    if value is not None:
+        v = float(value)
+    else:
+        try:
+            from app.runtime_config import get
+            v = float(get("chroma_bias", 0.0) or 0.0)
+        except Exception:
+            v = 0.0
+    return max(0.0, min(MAX_CHROMA_BIAS, v))
+
+
 def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
-                     profile: Spectra6Profile) -> list[list[int]]:
+                     profile: Spectra6Profile,
+                     chroma_bias: float = 0.0) -> list[list[int]]:
     """6 色板 Floyd–Steinberg 抖动，返回每像素色板索引 0..5。
 
-    distance="rgb"：与 v1 完全一致（RGB 误差传播 + RGB 距离）。
-    distance="oklab"：误差传播与颜色选择统一在 OKLab 空间，
-    避免「RGB 误差 + OKLab 选择」两个空间不一致导致的误差补偿失效
-    （曾造成渐变区抖动错乱、大面积噪声）。
+    distance="rgb"：误差在 RGB 传播，取墨走 _pick_ink（色域外高饱和色
+    的墨水对混色修复在此生效，见 CHROMA_SAT_GATE 注释）。
+    distance="oklab"：误差传播与颜色选择统一在 OKLab 空间（实验分支，
+    无墨水对混色修复）。
     """
     targets = profile.targets
     distance = profile.distance
@@ -336,18 +529,21 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
                                              err[y + 1][x + 1][2] + qb * 1 / 16)
         return out
 
-    # rgb：历史行为，误差在 RGB 传播
+    # rgb：误差在 RGB 传播（不 clamp：截断会吞掉误差反馈，色域外颜色
+    # 的墨水对交替依赖误差累积）；高饱和色域外色走墨水对混色（_pick_ink
+    # 返回墨水索引 + 有效量化基准色，误差按基准色传播）
     for y in range(h):
         for x in range(w):
             r, g, b = pixels[y][x]
             er, eg, eb = err[y][x]
-            r2 = max(0, min(255, r + er))
-            g2 = max(0, min(255, g + eg))
-            b2 = max(0, min(255, b + eb))
-            idx = _nearest_index((r2, g2, b2), targets, "rgb")
+            r2 = r + er
+            g2 = g + eg
+            b2 = b + eb
+            idx, qr_base, qg_base, qb_base = _pick_ink(r, g, b, r2, g2, b2,
+                                                        targets, chroma_bias)
             out[y][x] = idx
             pr, pg, pb = targets[idx]
-            qr, qg, qb = (r2 - pr), (g2 - pg), (b2 - pb)
+            qr, qg, qb = (qr_base - pr), (qg_base - pg), (qb_base - pb)
             if x + 1 < w:
                 err[y][x + 1] = _add(err[y][x + 1], (qr * 7 / 16, qg * 7 / 16, qb * 7 / 16))
             if y + 1 < h:
@@ -382,13 +578,19 @@ def _to_device_layout(indices: list[list[int]], width: int) -> bytes:
 
 
 def _quantize_to_layout(img: Image.Image, width: int, height: int, dither: bool,
-                        profile: Spectra6Profile) -> bytes:
+                        profile: Spectra6Profile,
+                        chroma_bias: float = 0.0) -> bytes:
     """RGB 图像（已适配目标尺寸）-> FPS6 数据区。"""
     targets, distance = profile.targets, profile.distance
     pix = list(img.getdata())
     if dither:
         rows = [pix[y * width:(y + 1) * width] for y in range(height)]
-        indices = _floyd_steinberg(rows, profile)
+        indices = _floyd_steinberg(rows, profile, chroma_bias)
+    elif distance == "rgb":
+        # 非抖动路径同样应用墨水对混色（与抖动行为一致；源像素即调整后像素，
+        # 只取墨水索引）
+        indices = [[_pick_ink(p[0], p[1], p[2], p[0], p[1], p[2], targets, chroma_bias)[0]
+                    for p in pix[y * width:(y + 1) * width]] for y in range(height)]
     else:
         indices = [[_nearest_index(pix[y * width + x], targets, distance)
                     for x in range(width)] for y in range(height)]
@@ -447,22 +649,25 @@ def prepare_image(
     height: int = DEVICE_HEIGHT,
     dither: bool = True,
     profile: str | Spectra6Profile = "v2",
+    chroma_bias: float | None = None,
 ) -> PreparedImage:
     """输入任意格式图片字节，输出 FPS6 设备格式。
 
-    profile: "v1"（历史 RGB 距离 + 理想色观感）或 "v2"（OKLab 感知距离
-    + 校准观感色）；默认 v2。
+    profile: "v1"（历史 RGB 距离 + 理想色观感）或 "v2"（校准色空间）。
+    chroma_bias: 浓彩偏置 0..4（None = 读运行时配置 chroma_bias，
+    默认 0）；色域外高饱和色的墨水对混合向彩色端偏移的强度。
     """
     if (width, height) != (DEVICE_WIDTH, DEVICE_HEIGHT):
         raise ValueError(f"only {DEVICE_WIDTH}x{DEVICE_HEIGHT} supported, got {width}x{height}")
 
     prof = get_profile(profile) if isinstance(profile, str) else profile
+    bias = _effective_chroma_bias(chroma_bias)
 
     img = Image.open(io.BytesIO(image_bytes))
     img = _fit(img, width, height)
 
     # 量化+抖动集中在 _quantize_to_layout 内完成（之前这里冗余算过一遍，从未使用）
-    raw = _quantize_to_layout(img, width, height, dither, prof)
+    raw = _quantize_to_layout(img, width, height, dither, prof, bias)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
                          profile=prof)
 
@@ -565,6 +770,7 @@ def prepare_image_with_caption(
     height: int = DEVICE_HEIGHT,
     dither: bool = True,
     profile: str | Spectra6Profile = "v2",
+    chroma_bias: float | None = None,
 ) -> PreparedImage:
     """照片 + 底部文案渲染：底部圆角衬底块 + 日期小字 + 文案白字。
 
@@ -593,7 +799,8 @@ def prepare_image_with_caption(
             _draw_caption(canvas, width, height, caption, date_str)
 
     prof = get_profile(profile) if isinstance(profile, str) else profile
-    raw = _quantize_to_layout(canvas, width, height, dither, prof)
+    bias = _effective_chroma_bias(chroma_bias)
+    raw = _quantize_to_layout(canvas, width, height, dither, prof, bias)
     return PreparedImage(width=width, height=height, data=_pack_fps6(raw, width, height),
                          profile=prof)
 

@@ -238,3 +238,113 @@ def test_color_nibble_mapping():
         k = x // 2  # LTR：字节 k ↔ 像素对 (2k, 2k+1)
         byte = raw[y * (W // 2) + k]
         assert byte == (NIBBLES[i] << 4) | NIBBLES[i], f"color {i}: got {byte:02x}"
+
+
+# ---------- 色域外高饱和混色（彩虹图白色块回归） ----------
+# 现象：校准后的墨水都比理想色板暗（唯一亮彩墨是黄），亮青/品红这类
+# 色域外高饱和色在「最近墨水」判定下必然命中白墨，整块退化为白色
+# （实测青块白墨 83%）。修复：最近墨水为黑白且像素饱和度超过门槛时，
+# 改用「最近墨水对」最小二乘混合（纯青 → 白59%+蓝41%），误差扩散
+# 自动实现混合比例。
+
+_DARK_CALIBRATED = (
+    (0, 0, 0),        # 黑
+    (217, 217, 217),  # 白（实拍校准值，偏暗）
+    (247, 247, 17),   # 黄
+    (161, 0, 0),      # 红
+    (0, 6, 184),      # 蓝
+    (18, 140, 7),     # 绿
+)
+
+
+def _dark_profile():
+    from app.epd_image import Spectra6Profile
+    return Spectra6Profile(name="test-dark", targets=_DARK_CALIBRATED,
+                           device=_DARK_CALIBRATED, distance="rgb")
+
+
+def _region_ink_fractions(prepared, x0, x1, y0, y1) -> list[float]:
+    """统计 prepared 数据区中矩形区域的 6 墨占比。"""
+    from app.epd_image import NIBBLE_TO_INDEX
+    counts = [0] * 6
+    row_bytes = prepared.width // 2
+    raw = prepared.raw_index
+    for y in range(y0, y1):
+        base = y * row_bytes
+        for k in range(x0 // 2, x1 // 2):
+            b = raw[base + k]
+            counts[NIBBLE_TO_INDEX[b >> 4]] += 1
+            counts[NIBBLE_TO_INDEX[b & 0xF]] += 1
+    total = (x1 - x0) * (y1 - y0)
+    return [c / total for c in counts]
+
+
+def test_saturated_out_of_gamut_mixes_chromatic():
+    """高饱和青/品红不得整块退化为白墨（真实调用路径回归测试）。
+
+    暗校准色板下，纯青/纯品红的白墨占比曾达 83~85%；修复后应为
+    白+彩色墨水的混合：白墨 ≤ 65%，彩色墨水（黄红蓝绿）≥ 25%。
+    """
+    left = Image.new("RGB", (W // 2, H), (0, 255, 255))    # 纯青（色域外）
+    right = Image.new("RGB", (W - W // 2, H), (255, 0, 255))  # 纯品红（色域外）
+    img = Image.new("RGB", (W, H))
+    img.paste(left, (0, 0))
+    img.paste(right, (W // 2, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    p = prepare_image(buf.getvalue(), profile=_dark_profile(), chroma_bias=0.0)
+
+    # 中央区域统计（避开 FS 误差边界与图像边缘）
+    cyan = _region_ink_fractions(p, int(W*0.08), int(W*0.42), int(H*0.3), int(H*0.7))
+    magenta = _region_ink_fractions(p, int(W*0.58), int(W*0.92), int(H*0.3), int(H*0.7))
+
+    for name, fr in (("青", cyan), ("品红", magenta)):
+        assert fr[1] <= 0.65, f"{name}区白墨占比 {fr[1]:.2f} 超过 65%（退化为白色块）"
+        chromatic = sum(fr[2:])
+        assert chromatic >= 0.25, f"{name}区彩色墨水占比 {chromatic:.2f} 低于 25%（无混色）"
+
+
+def test_chroma_bias_pushes_chromatic_share():
+    """浓彩偏置：bias 增大时，饱和色的彩色墨水份额单调不降、白墨不升。"""
+    from app.epd_image import _floyd_steinberg
+    rows = [[(0, 255, 255)] * 240 for _ in range(240)]  # 纯青
+    prof = _dark_profile()
+    base = _floyd_steinberg(rows, prof)
+    biased = _floyd_steinberg(rows, prof, chroma_bias=2.0)
+
+    def shares(idx):
+        flat = [v for row in idx for v in row]
+        n = len(flat)
+        return sum(1 for v in flat if v >= 2) / n, sum(1 for v in flat if v == 1) / n
+
+    chrom0, white0 = shares(base)
+    chrom2, white2 = shares(biased)
+    assert chrom2 > chrom0, f"bias 后彩色份额未增加: {chrom0:.2f} -> {chrom2:.2f}（旋钮失效）"
+    assert white2 < white0, f"bias 后白墨份额未下降: {white0:.2f} -> {white2:.2f}（旋钮失效）"
+    # 默认（bias=0）本身也应是混合而非纯白
+    assert white0 <= 0.65 and chrom0 >= 0.25
+
+
+def test_neutral_colors_unaffected_by_mixing_intervention():
+    """中性色（灰阶）不触发墨水对干预：bias 前后输出逐字节一致。"""
+    from app.epd_image import _floyd_steinberg
+    rows = [[(128, 128, 128)] * 160 for _ in range(120)]
+    prof = _dark_profile()
+    assert _floyd_steinberg(rows, prof) == _floyd_steinberg(rows, prof, chroma_bias=3.0)
+
+
+def test_intervention_plan_cache_consistent():
+    """干预方案分桶缓存：同桶源色得到同一方案，色域内色返回 None。"""
+    from app.epd_image import _intervention_plan
+    prof = _dark_profile()
+    t = prof.targets
+    # 纯青（色域外）与桶内邻近色应得到一致方案
+    p1 = _intervention_plan(0, 255, 255, t)
+    p2 = _intervention_plan(3, 252, 249, t)   # 同一 8 级桶
+    assert p1 == p2
+    # 方案应为（黑白端, 彩色端, ...）结构
+    assert p1 is not None and p1[0] <= 1 and p1[1] >= 2, f"方案结构异常: {p1}"
+    # 色域内亮饱和色（白绿蓝混色内部的桶中心）：不干预
+    inside = _intervention_plan(68, 132, 100, t)
+    assert inside is None, "色域内亮色不应触发墨水对干预"

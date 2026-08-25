@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     weather_cache_dir: str = str(Path(__file__).resolve().parent / "weather_cache")
     ip_loc_cache_file: str = ""    # 留空 = WEATHER_CACHE_DIR/ip_loc.json
 
+    # 浓彩偏置：色域外高饱和色的墨水对混合向彩色端偏移（0 = 忠实混色，
+    # 上限 4；管理台校准页清杆读写，见 ADR-0004）
+    chroma_bias: float = 0.0
+
     # AI 照片分析（VLM）
     vlm_enabled: bool = True
     vlm_provider: str = "auto"     # auto | openai | anthropic | disabled

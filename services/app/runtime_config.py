@@ -39,6 +39,7 @@ ALLOWED_KEYS: dict[str, type] = {
     "qweather_location": str,  # 和风 location（空 = IP 自动定位）
     "daily_manual": dict,    # 手动指定今日精选 {path, date}
     "content_push": dict,    # 内容库推送图上屏 {id, date}（当日有效）
+    "chroma_bias": float,    # 浓彩偏置 0..4：色域外高饱和色的墨水对混色向彩色端偏移（ADR-0004）
 }
 
 # 旧键 → 新键别名（自由模块前身「新闻卡片」时段的历史 runtime_config.json）。
@@ -80,6 +81,11 @@ def _coerce(key: str, value):
         return bool(value)
     if typ is str:
         return value if isinstance(value, str) else str(value)
+    if typ is float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return value
     return value
 
 

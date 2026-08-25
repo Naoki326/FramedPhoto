@@ -294,6 +294,13 @@
             彩虹效果图走<b>正常转换链路</b>（量化+抖动），推送到设备看照片/内容在屏幕上的实际效果。
             觉得颜色不对就回步骤 2 调整；调整后再推一次对比。
           </p>
+          <div style="display:flex;gap:10px;align-items:center;margin:2px 0 10px">
+            <span style="font-size:12px;color:#374151;white-space:nowrap">浓彩偏置 <b id="calBiasVal">0.0</b></span>
+            <input type="range" id="calBias" min="0" max="4" step="0.1" value="0" style="flex:1"
+                   oninput="$('calBiasVal').textContent=(+this.value).toFixed(1)"
+                   onchange="calBiasSave(this.value)">
+            <span style="font-size:11px;color:#9ca3af;white-space:nowrap">0=忠实混色 → 4=浓彩（偏暗）</span>
+          </div>
           <div style="display:flex;gap:10px;align-items:center">
             <button onclick="calRainbowPush()" id="calRainbowBtn" style="background:#7c3aed;color:#fff">生成彩虹效果图并推送设备</button>
             <button onclick="calShowRainbow()" style="background:#f3f4f6;color:#374151">预览</button>
@@ -1030,6 +1037,10 @@ function renderCalStatus(s) {
     ? `✅ 已校准（${s.captured_at || '时间未知'}）· 当前生效 <b>v2</b> 调色板`
     : `未校准 · 当前 v2 使用默认占位色（黑白未标定，四色为历史实拍采样）`;
   $('calClearBtn').style.display = s.calibrated ? '' : 'none';
+  if (typeof s.chroma_bias === 'number') {
+    $('calBias').value = s.chroma_bias;
+    $('calBiasVal').textContent = s.chroma_bias.toFixed(1);
+  }
   const box = $('calColors');
   box.innerHTML = '';
   const cur = s.device, def = s.defaults;
@@ -1071,6 +1082,16 @@ async function calRainbowPush() {
 }
 async function calShowChart() { window.open('/api/calibration/chart', '_blank'); }
 async function calShowRainbow() { window.open('/api/calibration/rainbow', '_blank'); }
+async function calBiasSave(v) {
+  try {
+    await api('/calibration/chroma-bias', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: parseFloat(v) })
+    });
+    toast('浓彩偏置已保存: ' + parseFloat(v).toFixed(1) + '，重新推送彩虹图或照片即可看到效果');
+  } catch (e) { toast('保存失败: ' + e.message); }
+}
 async function calUpload(markedOnly) {
   const f = $('calPhoto').files[0];
   if (!f) return toast('请先选择校准图照片');

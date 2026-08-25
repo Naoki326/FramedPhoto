@@ -64,10 +64,29 @@ async def rainbow_preview():
 
 @router.post("/rainbow/push")
 async def rainbow_push():
-    """生成彩虹效果图并直推设备（走正常量化链路）。"""
+    """生成彩虹效果图并直推设备（走正常量化链路，含浓彩偏置）。"""
     raw = calibration.rainbow_fps6()
     _validate_fps6(raw, (settings.epd_width, settings.epd_height))
     return {"ok": True, "display": display.save_pushed_frame(raw, "rainbow.fps6")}
+
+
+@router.put("/chroma-bias")
+async def set_chroma_bias(body: dict):
+    """设置浓彩偏置（0..4）：色域外高饱和色的墨水对混色向彩色端偏移。
+
+    0 = 忠实混色（最小二乘比例，默认）；越大越浓彩（偏暗）。存
+    runtime_config，全部渲染链路即时生效（见 ADR-0004）。
+    """
+    from app import runtime_config
+    from app.epd_image import MAX_CHROMA_BIAS
+    try:
+        value = float(body.get("value"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "value 必须是数字") from None
+    if not 0.0 <= value <= MAX_CHROMA_BIAS:
+        raise HTTPException(400, f"value 必须在 0~{MAX_CHROMA_BIAS:.0f} 之间")
+    runtime_config.save({"chroma_bias": value})
+    return {"ok": True, "chroma_bias": value}
 
 
 @router.post("/photo")

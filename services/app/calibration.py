@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.config import settings
 from app.epd_image import (
     CALIBRATED_PROFILE_PATH,
     DEVICE_HEIGHT,
@@ -201,6 +202,7 @@ def clear_calibrated() -> bool:
 
 def calibration_status() -> dict:
     """当前校准状态（供管理台展示）。"""
+    from app import runtime_config
     from app.epd_image import SPECTRA6_PROFILE_V2
     calibrated = CALIBRATED_PROFILE_PATH.exists()
     try:
@@ -214,6 +216,7 @@ def calibration_status() -> dict:
         "device": [list(c) for c in SPECTRA6_PROFILE_V2.device],
         "names": COLOR_NAMES,
         "defaults": [list(c) for c in DEFAULT_DEVICE],
+        "chroma_bias": runtime_config.effective("chroma_bias", settings),
     }
 
 
