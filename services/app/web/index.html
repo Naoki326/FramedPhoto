@@ -137,6 +137,22 @@
     <section>
       <h2>照片库（设为今日精选）</h2>
       <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+      <div id="frameUploader" style="border:1px dashed #d1d5db;border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#fafbfc">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-size:13px;color:#374151">📤 家庭共享上传：把照片传到 NAS 并进照片库</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <input id="frameUser" list="frameUserList" placeholder="你的名字（如 naoki）"
+                 style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:150px">
+          <datalist id="frameUserList"></datalist>
+          <button onclick="$('frameFiles').click()" id="framePickBtn">选照片</button>
+          <input type="file" id="frameFiles" accept="image/*" multiple hidden>
+          <button onclick="$('frameDir').click()" id="frameDirBtn">选文件夹</button>
+          <input type="file" id="frameDir" webkitdirectory directory hidden>
+          <span id="frameUpMsg" style="font-size:12px;color:#6b7280"></span>
+        </div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:6px">上传到 NAS 的 Frame_<名字> 文件夹并自动进照片库（同名照片自动跳过）</div>
+      </div>
       <div id="scoresTabs" style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:8px;padding-bottom:4px"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
         <span style="color:#6b7280">排序：</span>
@@ -569,6 +585,57 @@ $('scores') && $('scores').addEventListener('scroll', () => {
     _renderScores(box, false);
   }
 });
+
+// ---------- 家庭共享上传（Frame_* 文件夹 → NAS + 照片库） ----------
+function _frameUserListKey() { return 'frameUsers'; }
+function _loadFrameUsers() {
+  try {
+    const names = JSON.parse(localStorage.getItem(_frameUserListKey()) || '[]');
+    $('frameUserList').innerHTML = names.map(n => `<option value="${n}">`).join('');
+  } catch (_) {}
+}
+function _rememberFrameUser(name) {
+  try {
+    const names = JSON.parse(localStorage.getItem(_frameUserListKey()) || '[]');
+    if (!names.includes(name)) { names.push(name); localStorage.setItem(_frameUserListKey(), JSON.stringify(names)); }
+  } catch (_) {}
+  _loadFrameUsers();
+}
+_loadFrameUsers();
+
+async function _uploadFrames(fileList, useRelPath) {
+  const name = ($('frameUser').value || '').trim();
+  if (!name) { toast('先填你的名字'); $('frameUser').focus(); return; }
+  const files = [...fileList].filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)$/i.test(f.name));
+  if (!files.length) { toast('没有可上传的照片'); return; }
+  const folder = 'Frame_' + name;
+  const msg = $('frameUpMsg');
+  msg.textContent = `上传中 ${files.length} 张到 ${folder} …`;
+  const fd = new FormData();
+  fd.append('folder', folder);
+  const rels = [];
+  for (const f of files) {
+    fd.append('files', f, f.name);
+    // webkitdirectory：保留相对子结构（旅行/IMG_01.jpg）；多选：只用文件名
+    rels.push(useRelPath && f.webkitRelativePath ? f.webkitRelativePath : f.name);
+  }
+  fd.append('paths', rels.join('|'));
+  try {
+    const r = await api('/analysis/upload', { method: 'POST', body: fd });
+    _rememberFrameUser(name);
+    const parts = [`✅ 新传 ${r.saved} 张`];
+    if (r.skipped) parts.push(`跳过同名 ${r.skipped} 张`);
+    if (r.errors?.length) parts.push(`失败 ${r.errors.length}`);
+    msg.textContent = parts.join('，') + ` → ${folder}（自动同步到 NAS）`;
+    toast(parts.join('，'));
+    loadScores();   // 新照片进照片库 tab
+  } catch (e) {
+    msg.textContent = '上传失败: ' + e.message;
+    toast('上传失败: ' + e.message);
+  }
+}
+$('frameFiles') && $('frameFiles').addEventListener('change', e => { _uploadFrames(e.target.files, false); e.target.value = ''; });
+$('frameDir') && $('frameDir').addEventListener('change', e => { _uploadFrames(e.target.files, true); e.target.value = ''; });
 
 function renderScoreTabs(categories) {
   const bar = $('scoresTabs');

@@ -142,6 +142,34 @@ def _clone_photo_score(original: Path, mirror: Path, filename: str) -> None:
         )
 
 
+def push_frame_dir(folder: str) -> dict:
+    """把照片库某文件夹（如 Frame_naoki）增量推回 NAS 备份。
+
+    家庭共享上传的对称操作：网页上传落本机照片库后，同步一份到 NAS
+    NAS_PHOTO_DIR/<folder>/，NAS 仍是照片的最终存储（重建照片库 /
+    其它设备都有完整原件）。增量 rsync：已推过的不重传。
+    """
+    if not configured():
+        return {"ok": False, "reason": "NAS 未配置"}
+    src = _service_path(settings.photo_lib_dir) / folder
+    if not src.is_dir():
+        return {"ok": False, "reason": f"目录不存在: {src}"}
+    remote_dir = f"{settings.nas_photo_dir.rstrip('/')}/{folder}"
+    _remote_mkdir(remote_dir)
+    args = [
+        _rsync_bin(), "-rltz", "--partial", "--timeout=60",
+        "--chmod=Du+rwx,Dg+rx,Fu+rw,Fgo+r",
+        "-e", _ssh_transport(),
+    ]
+    if settings.nas_rsync_bwlimit > 0:
+        args.append(f"--bwlimit={settings.nas_rsync_bwlimit}")
+    if settings.nas_rsync_path:
+        args.append(f"--rsync-path={settings.nas_rsync_path}")
+    args.extend([f"{src}/", f"{_target()}:{remote_dir}/"])
+    _run(args, timeout=600)
+    return {"ok": True, "folder": folder, "remote_dir": remote_dir}
+
+
 def push_content_image(image_id: str, filename: str) -> dict:
     """上传一张内容库原图到 NAS，并写入本地 NAS 镜像。
 

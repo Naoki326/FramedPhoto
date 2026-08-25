@@ -1385,3 +1385,87 @@ def test_content_manifest_per_slot_bound_category(monkeypatch):
     assert data["source"] == "daily"
     assert data["images"][0]["id"].startswith("daily-")
     assert data["images"][0]["filename"] == "pick.png"
+
+
+# ---------- 照片库上传入口（家庭共享：按文件夹上传 → 自动分析 → 同步回 NAS） ----------
+
+def _patch_photo_lib(monkeypatch, tmp_path):
+    """隔离照片库目录 + 拦截 NAS 推送（不上真实 NAS）。"""
+    from app.routers import analysis as analysis_mod
+    from app import nas_sync
+    lib = tmp_path / "photos"
+    lib.mkdir(exist_ok=True)
+    monkeypatch.setattr(analysis_mod.settings, "photo_lib_dir", str(lib))
+    pushed = []
+    monkeypatch.setattr(nas_sync, "push_frame_dir",
+                        lambda folder: pushed.append(folder) or {"ok": True, "folder": folder})
+    return lib, pushed
+
+
+def test_photo_upload_to_frame_folder(monkeypatch, tmp_path):
+    """上传照片到 Frame_ 文件夹：落盘 + 启发式分析入库 + 分类正确 + 触发 NAS 推送。"""
+    lib, pushed = _patch_photo_lib(monkeypatch, tmp_path)
+    r = client.post("/api/analysis/upload", data={"folder": "Frame_测试"},
+                    files=[("files", ("a.png", _png_bytes(color=(10, 20, 30)), "image/png")),
+                           ("files", ("b.png", _png_bytes(color=(40, 50, 60)), "image/png"))])
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["saved"] == 2, body
+    # 文件落盘到照片库目标文件夹
+    assert (lib / "Frame_测试" / "a.png").is_file()
+    assert (lib / "Frame_测试" / "b.png").is_file()
+    # 启发式分析入库（bg task 同步执行），分类 = 文件夹名
+    from app import db
+    rec = db.get_photo_score(str(lib / "Frame_测试" / "a.png"))
+    assert rec is not None and rec.get("analyzed_at"), "上传后应自动启发式分析"
+    assert rec["category"] == "Frame_测试"
+    # NAS 推送被触发（推该文件夹目录）
+    assert "Frame_测试" in pushed
+
+
+def test_photo_upload_with_subfolder_relpath(monkeypatch, tmp_path):
+    """文件夹上传（webkitRelativePath）：子目录结构保留，分类仍为第一层文件夹名。"""
+    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
+    r = client.post("/api/analysis/upload",
+                    data={"folder": "Frame_naoki", "paths": "旅行/IMG_01.jpg"},
+                    files=[("files", ("IMG_01.jpg", _png_bytes(), "image/jpeg"))])
+    assert r.status_code == 200, r.text
+    assert r.json()["saved"] == 1
+    assert (lib / "Frame_naoki" / "旅行" / "IMG_01.jpg").is_file()
+    from app import db
+    rec = db.get_photo_score(str(lib / "Frame_naoki" / "旅行" / "IMG_01.jpg"))
+    assert rec is not None and rec["category"] == "Frame_naoki"
+
+
+def test_photo_upload_rejects_bad_folder(monkeypatch, tmp_path):
+    """非法文件夹名（路径穿越 / 分隔符 / 空）→ 400。"""
+    _patch_photo_lib(monkeypatch, tmp_path)
+    for bad in ("../evil", "a/b", "", "  ", "a\\b"):
+        r = client.post("/api/analysis/upload", data={"folder": bad},
+                        files=[("files", ("a.png", _png_bytes(), "image/png"))])
+        assert r.status_code == 400, f"folder={bad!r} 应拒绝"
+
+
+def test_photo_upload_rejects_path_traversal_in_relpath(monkeypatch, tmp_path):
+    """相对路径含 .. / 绝对路径 → 400（防穿越）。"""
+    _patch_photo_lib(monkeypatch, tmp_path)
+    for bad_path in ("../evil.png", "/etc/evil.png", "a/../../b.png"):
+        r = client.post("/api/analysis/upload",
+                        data={"folder": "Frame_x", "paths": bad_path},
+                        files=[("files", ("a.png", _png_bytes(), "image/png"))])
+        assert r.status_code == 400, f"paths={bad_path!r} 应拒绝"
+
+
+def test_photo_upload_skip_existing_and_non_image(monkeypatch, tmp_path):
+    """同名文件跳过（幂等）；非图片扩展名拒绝。"""
+    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
+    files = [("files", ("dup.png", _png_bytes(color=(1, 2, 3)), "image/png"))]
+    r1 = client.post("/api/analysis/upload", data={"folder": "Frame_x"}, files=files)
+    assert r1.status_code == 200 and r1.json()["saved"] == 1
+    r2 = client.post("/api/analysis/upload", data={"folder": "Frame_x"}, files=files)
+    assert r2.status_code == 200
+    assert r2.json()["saved"] == 0 and r2.json()["skipped"] == 1
+    # 非图片
+    r3 = client.post("/api/analysis/upload", data={"folder": "Frame_x"},
+                     files=[("files", ("virus.exe", b"MZ...", "application/octet-stream"))])
+    assert r3.status_code == 400
