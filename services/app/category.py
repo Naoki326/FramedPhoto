@@ -1,10 +1,13 @@
 """
-category.py — 照片分类：照片库第一层文件夹名（ADR-0007）。
+category.py — 照片分类：NAS photo 第一层文件夹名（ADR-0005 / 0007）。
 
 一张照片恰好属于一个分类：分类由路径第一段推导（无目录分隔符 = 未分类），
 深层子目录归其第一层祖先。分类没有独立于照片的生命周期——分类列表由照片
-记录聚合而来（空分类的 tab 由磁盘目录列表补足）。照片库完全本地管理：
-文件夹经管理台新建 / 重命名 / 删除（ADR-0007），不再与 NAS 同步。
+记录聚合而来（空分类的 tab 由磁盘目录列表补足）。
+
+NAS /volume1/photo 是唯一共享照片目录（不做每人一夹）：文件夹经管理台
+新建 / 重命名 / 删除空文件夹（ADR-0007）——先在 NAS 侧执行，成功后同步
+本地镜像并迁移评分记录；上传也不再按人命名，统一进所选文件夹或根目录。
 
 内容哈希迁移（ADR-0005）：分析扫描发现新路径时按内容哈希查既有记录——
 命中且旧路径文件已不存在 → 迁移（更新 path 与分类，保留评分文案）；
@@ -16,7 +19,7 @@ import hashlib
 import re
 from pathlib import Path
 
-from app import db
+from app import db, nas_sync
 from app.config import settings
 
 # 未分类的特殊标记（照片库根目录散照 / 内容库上传图所属分类，正常参与选片）
@@ -99,7 +102,7 @@ def _disk_first_level_dirs() -> list[str]:
         return []
 
 
-# ---------- 文件夹管理（ADR-0007：新建 / 重命名 / 删除） ----------
+# ---------- 文件夹管理（ADR-0007：NAS 侧新建 / 重命名 / 删除空文件夹） ----------
 
 def valid_folder_name(name: str) -> bool:
     """文件夹名合法性：字符集 / 长度 / 非保留名（未分类）。"""
@@ -124,30 +127,40 @@ def folder_photo_count(name: str) -> int:
 
 
 def list_folders() -> list[dict]:
-    """照片库文件夹列表（磁盘第一层目录 + 实际照片数），按名称排序。
+    """照片库文件夹列表（本地镜像第一层目录 + 实际照片数），按名称排序。
 
-    与 category_summary（tab 排序，按已分析记录计数）不同，这里足磁盘事实：
-    供上传下拉与文件夹管理用。"""
+    镜像可能滞后于 NAS（尚未同步）：以磁盘目录为准，镜像缺失时回退
+    NAS 实际列表（count 记 0，同步后自然补齐）。
+    """
     names = _disk_first_level_dirs()
+    try:
+        if not names:
+            names = nas_sync.remote_list_dirs()
+    except Exception:  # noqa: BLE001 — NAS 不可达时退回镜像事实
+        pass
     return [{"name": n, "count": folder_photo_count(n)} for n in names]
 
 
 def create_folder(name: str) -> Path:
-    """新建空文件夹（成为新分类 tab）。名字非法 / 重名抛 ValueError。"""
+    """在 NAS photo 下新建空文件夹（成为新分类 tab），成功后镜像到本地。
+
+    名字非法 / 重名 / NAS 不可达抛异常；NAS 先行，本地镜像不超前于 NAS。
+    """
     if not valid_folder_name(name):
         raise ValueError(f"非法文件夹名: {name!r}（仅中文/字母/数字/下划线/横线，且不可叫「{UNCATEGORIZED}」）")
     if folder_exists(name):
         raise FileExistsError(f"文件夹已存在: {name}")
+    nas_sync.remote_mkdir(name)   # NAS 先建；失败（已存在/不可达）直接抛
     path = folder_path(name)
-    path.mkdir(parents=True, exist_ok=False)
+    path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def rename_folder(old: str, new: str) -> int:
-    """重命名文件夹：mv 目录 + 迁移评分记录（path 前缀与分类，ADR-0007）。
+    """重命名文件夹：NAS mv → 本地镜像 mv → 迁移评分记录（ADR-0007）。
 
-    返回迁移的评分记录条数。名字非法 / 源不存在 / 目标重名抛异常。
-    编排层联动（时段绑定 / 手动指定今日精选）由路由层负责。
+    返回迁移的评分记录条数。名字非法 / 源不存在 / 目标重名 / NAS 不可达
+    抛异常。编排层联动（时段绑定 / 手动指定今日精选）由路由层负责。
     """
     if not valid_folder_name(new):
         raise ValueError(f"非法文件夹名: {new!r}（仅中文/字母/数字/下划线/横线，且不可叫「{UNCATEGORIZED}」）")
@@ -155,12 +168,13 @@ def rename_folder(old: str, new: str) -> int:
         raise FileNotFoundError(f"文件夹不存在: {old}")
     if folder_exists(new):
         raise FileExistsError(f"目标文件夹已存在: {new}")
+    nas_sync.remote_rename(old, new)   # NAS 先行（内含目标存在探测，防 mv 进目录）
     folder_path(old).rename(folder_path(new))
     return db.rename_category(old, new)
 
 
 def delete_folder(name: str) -> int:
-    """删除空文件夹（连评分残留记录一并清理），返回清除的记录条数。
+    """删除空文件夹（NAS 与本地），连带清理评分残留记录，返回清除条数。
 
     仅允许删除空文件夹（非空抛 OSError）；磁盘残留记录（文件已不在但
     评分还在）随删除一并清掉，避免 tab 幽灵计数。
@@ -172,6 +186,7 @@ def delete_folder(name: str) -> int:
         raise FileNotFoundError(f"文件夹不存在: {name}")
     if any(path.iterdir()):
         raise OSError(f"文件夹非空，请先清空（移出或删除照片）: {name}")
+    nas_sync.remote_rmdir(name)   # NAS 先删（rmdir 只删空目录，双重保险）
     path.rmdir()
     return db.delete_category_scores(name)
 

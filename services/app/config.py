@@ -45,8 +45,17 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-4-20250514"
     anthropic_base_url: str = "https://api.anthropic.com"
 
+    # NAS（照片库主存储：pull 由 sync_nas.sh 定时/手动执行；
+    # push 与远端文件夹操作见 app/nas_sync.py，ADR-0007）
+    nas_ssh_host: str = ""
+    nas_ssh_user: str = ""
+    nas_ssh_port: int = 22
+    nas_photo_dir: str = "/volume1/photo"
+    nas_rsync_path: str = ""
+    nas_rsync_bwlimit: int = 0
+
     # 每日精选
-    photo_lib_dir: str = "./photos"      # 照片库目录（上传照片 + analyze_photos 扫描）
+    photo_lib_dir: str = "./photos"      # 照片库目录（NAS 镜像：同步 pull + 上传 push）
     daily_min_score: float = 55.0          # 每日选片回忆度阈值
     daily_photo_quantity: int = 1          # 每日生成精选张数（设备取第一张）
     memory_threshold: float = 55.0         # 启发式回忆度阈值别名（保留兼容）

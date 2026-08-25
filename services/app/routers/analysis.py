@@ -4,11 +4,13 @@ analysis.py — 照片分析结果查询（AI 评分 / 每日精选元数据）+
 管理台照片库 tab 化（#25）：/scores 支持按分类过滤 + 返回分类汇总
 （名称 + 照片数，供 tab 排序与空分类合并显示）；未分类单列。
 
-照片上传（ADR-0007）：POST /upload 按文件夹上传照片到照片库（目标文件夹
-即分类，不存在则自动创建），后台自动启发式分析（免费）。
+照片上传（ADR-0007）：POST /upload 上传照片到 photo 指定文件夹（目标文件夹
+即分类，不存在则自动创建；不传 folder = 根目录/未分类），本地镜像落盘后
+后台自动启发式分析（免费）并增量推回 NAS（NAS 是最终存储）。
 
-文件夹管理（ADR-0007）：POST/PATCH/DELETE /folders 新建 / 重命名 /
-删除空文件夹，重命名连带迁移评分记录与时段绑定、手动指定今日精选。
+文件夹管理（ADR-0007）：POST/PATCH/DELETE /folders 在 NAS photo 下
+新建 / 重命名 / 删除空文件夹（NAS 先行，本地镜像与评分记录随动），
+重命名连带迁移时段绑定与手动指定今日精选。
 """
 import logging
 import re
@@ -16,7 +18,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
 
-from app import category, db, daily, runtime_config, slots
+from app import category, db, daily, nas_sync, runtime_config, slots
 from app.analyzer import analyze_image
 from app.config import settings
 
@@ -57,19 +59,21 @@ def _safe_relpath(rel: str) -> Path:
 @router.post("/upload")
 async def upload_photos(
     bg: BackgroundTasks,
-    folder: str = Form(...),
+    folder: str | None = Form(None),
     files: list[UploadFile] = File(...),
     paths: str | None = Form(None),
 ):
-    """上传照片到照片库指定文件夹（目标文件夹即分类，不存在则自动创建）。
+    """上传照片到 photo 指定文件夹（目标文件夹即分类，不存在则自动创建）。
 
-    - folder：目标文件夹名，须匹配 _FOLDER_NAME（防穿越）；不存在自动创建
+    - folder：目标文件夹名，须匹配 _FOLDER_NAME（防穿越）；缺省/空 = 根目录
+      （照片归「未分类」，ADR-0007：不再按人命名，共用同一个 photo 目录）
     - files：多文件（multipart）；paths：可选，与 files 一一对应的相对路径
       （文件夹上传时保留子目录结构，分类仍为第一层文件夹名）
-    - 落盘 PHOTO_LIB_DIR/<folder>/<relpath>；同名文件跳过（幂等）
-    - 后台：启发式分析入库（免费，与手动 analyze_photos 同一策略）
+    - 落盘 PHOTO_LIB_DIR/[folder/]<relpath>；同名文件跳过（幂等）
+    - 后台：启发式分析入库（免费）+ 增量推回 NAS（最终存储）
     """
-    if not _FOLDER_NAME.fullmatch(folder or ""):
+    folder = (folder or "").strip()
+    if folder and not _FOLDER_NAME.fullmatch(folder):
         raise HTTPException(400, f"非法文件夹名: {folder!r}（仅中文/字母/数字/下划线/横线）")
     lib = Path(settings.photo_lib_dir)
     rel_paths = (paths or "").split("|") if paths else []
@@ -83,7 +87,7 @@ async def upload_photos(
                 else Path(f.filename or "")
             if not _IMAGE_EXT.search(rel.name):
                 raise HTTPException(400, f"仅支持图片文件: {rel.name}")
-            dest = lib / folder / rel
+            dest = (lib / folder / rel) if folder else (lib / rel)
             dest.parent.mkdir(parents=True, exist_ok=True)
             if dest.exists():
                 skipped.append(str(rel))
@@ -101,6 +105,9 @@ async def upload_photos(
             errors.append(f"{getattr(f, 'filename', '?')}: {e}")
     if errors and not saved:
         raise HTTPException(400, "; ".join(errors))
+    # 有新文件 → 请求级推一次 NAS（最终存储；每请求一次 rsync，非每张）
+    if saved:
+        bg.add_task(_push_frame_folder, folder or None)
     return {"ok": True, "folder": folder, "saved": len(saved), "skipped": len(skipped),
             "files": saved, "skipped_files": skipped, "errors": errors}
 
@@ -112,6 +119,16 @@ def _analyze_uploaded(path: str) -> None:
         category.migrate_or_record(a)
     except Exception as exc:  # noqa: BLE001
         logger.exception("frame upload analyze failed: %s", exc)
+
+
+def _push_frame_folder(folder: str | None) -> None:
+    """后台任务：把上传的文件夹（None=根目录散照）增量推回 NAS（最终存储）。
+
+    失败不影响上传结果（本地镜像已落盘），下次上传同一文件夹时增量补推。"""
+    try:
+        nas_sync.push_frame_dir(folder)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("frame upload push to NAS failed: %s %s", folder, exc)
 
 
 # ---------- 文件夹管理（ADR-0007：新建 / 重命名 / 删除空文件夹） ----------
@@ -154,7 +171,7 @@ async def list_folders():
 
 @router.post("/folders")
 async def create_folder(body: dict):
-    """新建空文件夹（成为新分类 tab，可后续上传照片进去）。"""
+    """在 NAS photo 下新建空文件夹（成为新分类 tab，可后续上传照片进去）。"""
     name = (body.get("name") or "").strip()
     try:
         path = category.create_folder(name)
@@ -162,6 +179,8 @@ async def create_folder(body: dict):
         raise HTTPException(400, str(exc)) from exc
     except FileExistsError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc   # NAS 不可达 / rsync 异常
     except OSError as exc:
         raise HTTPException(500, f"创建失败: {exc}") from exc
     return {"ok": True, "name": name, "path": str(path)}
@@ -169,7 +188,7 @@ async def create_folder(body: dict):
 
 @router.patch("/folders/{name}")
 async def rename_folder(name: str, body: dict):
-    """重命名文件夹：mv 目录 + 迁移评分记录 + 联动时段绑定与手动指定今日精选。"""
+    """重命名文件夹：NAS mv → 本地镜像 mv → 迁移评分记录 + 联动时段绑定与手动精选。"""
     new = (body.get("new_name") or "").strip()
     try:
         moved = category.rename_folder(name, new)
@@ -179,6 +198,8 @@ async def rename_folder(name: str, body: dict):
         raise HTTPException(404, str(exc)) from exc
     except FileExistsError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc   # NAS 不可达 / mv 失败
     except OSError as exc:
         raise HTTPException(500, f"重命名失败: {exc}") from exc
     _rewrite_manual_pick(name, new)
@@ -189,7 +210,7 @@ async def rename_folder(name: str, body: dict):
 
 @router.delete("/folders/{name}")
 async def delete_folder(name: str):
-    """删除空文件夹（连带清理该分类残留评分记录与时段绑定）。非空 → 409。"""
+    """删除空文件夹（NAS 与本地，连带清理该分类残留评分记录与时段绑定）。非空 → 409。"""
     try:
         removed = category.delete_folder(name)
     except ValueError as exc:
@@ -198,6 +219,8 @@ async def delete_folder(name: str):
         raise HTTPException(404, str(exc)) from exc
     except OSError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc   # NAS 不可达 / rmdir 失败
     _rewrite_manual_pick(name, None)
     rebound = _rebind_slot_categories(name, None)
     return {"ok": True, "deleted": name, "removed_records": removed,

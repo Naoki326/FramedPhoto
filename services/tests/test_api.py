@@ -1390,17 +1390,21 @@ def test_content_manifest_per_slot_bound_category(monkeypatch):
 # ---------- 照片库上传入口（按文件夹上传 → 自动分析入库） ----------
 
 def _patch_photo_lib(monkeypatch, tmp_path):
-    """隔离照片库目录（不碰真实 services/photos）。"""
+    """隔离照片库目录 + 拦截 NAS 推送（不上真实 NAS）。"""
     from app.routers import analysis as analysis_mod
+    from app import nas_sync
     lib = tmp_path / "photos"
     lib.mkdir(exist_ok=True)
     monkeypatch.setattr(analysis_mod.settings, "photo_lib_dir", str(lib))
-    return lib
+    pushed = []
+    monkeypatch.setattr(nas_sync, "push_frame_dir",
+                        lambda folder: pushed.append(folder) or {"ok": True, "folder": folder})
+    return lib, pushed
 
 
 def test_photo_upload_to_folder(monkeypatch, tmp_path):
     """上传照片到指定文件夹：落盘 + 启发式分析入库 + 分类正确（文件夹不存在自动创建）。"""
-    lib = _patch_photo_lib(monkeypatch, tmp_path)
+    lib, pushed = _patch_photo_lib(monkeypatch, tmp_path)
     r = client.post("/api/analysis/upload", data={"folder": "宝宝"},
                     files=[("files", ("a.png", _png_bytes(color=(10, 20, 30)), "image/png")),
                            ("files", ("b.png", _png_bytes(color=(40, 50, 60)), "image/png"))])
@@ -1415,11 +1419,27 @@ def test_photo_upload_to_folder(monkeypatch, tmp_path):
     rec = db.get_photo_score(str(lib / "宝宝" / "a.png"))
     assert rec is not None and rec.get("analyzed_at"), "上传后应自动启发式分析"
     assert rec["category"] == "宝宝"
+    # NAS 推送被触发（推该文件夹）
+    assert "宝宝" in pushed
+
+
+def test_photo_upload_to_root_uncategorized(monkeypatch, tmp_path):
+    """不传 folder = photo 根目录：落根、归未分类、推 NAS 根（散照模式）。"""
+    lib, pushed = _patch_photo_lib(monkeypatch, tmp_path)
+    r = client.post("/api/analysis/upload",
+                    files=[("files", ("root.png", _png_bytes(color=(5, 5, 5)), "image/png"))])
+    assert r.status_code == 200, r.text
+    assert r.json()["folder"] == ""
+    assert (lib / "root.png").is_file(), "不传 folder 应落 photo 根目录"
+    from app import db
+    rec = db.get_photo_score(str(lib / "root.png"))
+    assert rec is not None and rec["category"] == "未分类"
+    assert pushed == [None], "应推 NAS 根（folder=None 散照模式）"
 
 
 def test_photo_upload_with_subfolder_relpath(monkeypatch, tmp_path):
     """文件夹上传（webkitRelativePath）：子目录结构保留，分类仍为第一层文件夹名。"""
-    lib = _patch_photo_lib(monkeypatch, tmp_path)
+    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
     r = client.post("/api/analysis/upload",
                     data={"folder": "旅行", "paths": "2024北海道/IMG_01.jpg"},
                     files=[("files", ("IMG_01.jpg", _png_bytes(), "image/jpeg"))])
@@ -1432,12 +1452,17 @@ def test_photo_upload_with_subfolder_relpath(monkeypatch, tmp_path):
 
 
 def test_photo_upload_rejects_bad_folder(monkeypatch, tmp_path):
-    """非法文件夹名（路径穿越 / 分隔符 / 空）→ 400。"""
+    """非法文件夹名（路径穿越 / 分隔符）→ 400；空/缺省 = 根目录（合法）。"""
     _patch_photo_lib(monkeypatch, tmp_path)
-    for bad in ("../evil", "a/b", "", "  ", "a\\b"):
+    for bad in ("../evil", "a/b", "a\\b"):
         r = client.post("/api/analysis/upload", data={"folder": bad},
                         files=[("files", ("a.png", _png_bytes(), "image/png"))])
         assert r.status_code == 400, f"folder={bad!r} 应拒绝"
+    # 空串 / 缺省 = photo 根目录（未分类，ADR-0007），不再拒绝
+    for ok in ("", "  "):
+        r = client.post("/api/analysis/upload", data={"folder": ok},
+                        files=[("files", ("r.png", _png_bytes(), "image/png"))])
+        assert r.status_code == 200, f"folder={ok!r} 应视为根目录"
 
 
 def test_photo_upload_rejects_path_traversal_in_relpath(monkeypatch, tmp_path):
@@ -1452,7 +1477,7 @@ def test_photo_upload_rejects_path_traversal_in_relpath(monkeypatch, tmp_path):
 
 def test_photo_upload_skip_existing_and_non_image(monkeypatch, tmp_path):
     """同名文件跳过（幂等）；非图片扩展名拒绝。"""
-    lib = _patch_photo_lib(monkeypatch, tmp_path)
+    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
     files = [("files", ("dup.png", _png_bytes(color=(1, 2, 3)), "image/png"))]
     r1 = client.post("/api/analysis/upload", data={"folder": "宝宝"}, files=files)
     assert r1.status_code == 200 and r1.json()["saved"] == 1
@@ -1468,13 +1493,19 @@ def test_photo_upload_skip_existing_and_non_image(monkeypatch, tmp_path):
 # ---------- 照片库文件夹管理（ADR-0007：新建 / 重命名 / 删除） ----------
 
 def _patch_cat_settings(monkeypatch, tmp_path):
-    """隔离照片库目录（category 与 analysis 两处 settings 引用）。"""
-    from app import category as cat_mod
+    """隔离照片库目录 + 桩掉 NAS 远端操作与推送（不触真实 NAS）。"""
+    from app import category as cat_mod, nas_sync
     from app.routers import analysis as analysis_mod
     lib = tmp_path / "photos"
     lib.mkdir(exist_ok=True)
     monkeypatch.setattr(analysis_mod.settings, "photo_lib_dir", str(lib))
     monkeypatch.setattr(cat_mod.settings, "photo_lib_dir", str(lib))
+    monkeypatch.setattr(nas_sync, "remote_mkdir", lambda name: f"/volume1/photo/{name}")
+    monkeypatch.setattr(nas_sync, "remote_rename", lambda old, new: None)
+    monkeypatch.setattr(nas_sync, "remote_rmdir", lambda name: None)
+    monkeypatch.setattr(nas_sync, "remote_list_dirs", lambda: [])
+    monkeypatch.setattr(nas_sync, "push_frame_dir",
+                        lambda folder: {"ok": True, "folder": folder})
     return lib
 
 
