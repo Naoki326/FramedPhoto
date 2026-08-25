@@ -111,10 +111,11 @@ def fill_partition(segments: list[tuple[int, int, str]]) -> list[dict]:
 def canonicalize(raw) -> list[dict]:
     """校验并规范化管理台提交的 slot_segments；非法输入抛 ValueError。
 
-    返回 [{start: "HH:MM", type, module}]：按 start 升序；相邻同类型合并
-    （free 段须 module 相同才合并）；首段必须从 00:00 起
-    （若原首段不在 00:00，则按「跨天」在 00:00 处切开）。
+    返回 [{start: "HH:MM", type, module, category}]：按 start 升序；相邻同
+    类型合并（free 段须 module 相同才合并；photo 段须 category 相同才合并）；
+    首段必须从 00:00 起（若原首段不在 00:00，则按「跨天」在 00:00 处切开）。
     module 仅对 free 段有意义：固定到某个自由模块（字符串，空/null=随机轮换）。
+    category 仅对 photo 段有意义：绑定照片分类（字符串，空/null=全库选片）。
     """
     if not isinstance(raw, list) or not raw:
         raise ValueError("slot_segments 必须为非空列表")
@@ -134,16 +135,23 @@ def canonicalize(raw) -> list[dict]:
         module = module.strip() if isinstance(module, str) else None
         if typ != SLOT_FREE:
             module = None     # 非自由模块时段忽略 module
-        segs.append({"start": start, "type": typ, "module": module})
+        category = item.get("category")
+        if category is not None and (not isinstance(category, str) or not category.strip()):
+            raise ValueError(f"非法照片分类: {category!r}")
+        category = category.strip() if isinstance(category, str) else None
+        if typ != SLOT_PHOTO:
+            category = None   # 非照片时段忽略 category
+        segs.append({"start": start, "type": typ, "module": module, "category": category})
 
     def _merge_adjacent(items: list[dict]) -> list[dict]:
         out: list[dict] = []
         for s in items:
             prev = out[-1] if out else None
             same = prev and prev["type"] == s["type"] \
-                and prev.get("module") == s.get("module")
+                and prev.get("module") == s.get("module") \
+                and prev.get("category") == s.get("category")
             if same:
-                continue    # 相邻同类型（free 段须固定模块相同）只保留前一个起点
+                continue    # 相邻同类型（free 段须同模块、photo 段须同分类）只保留前一个起点
             out.append(dict(s))
         return out
 
@@ -152,7 +160,8 @@ def canonicalize(raw) -> list[dict]:
         raise ValueError("slot_segments 不能为空")
     if segs[0]["start"] != 0:
         segs.insert(0, {"start": 0, "type": segs[-1]["type"],
-                        "module": segs[-1].get("module")})
+                        "module": segs[-1].get("module"),
+                        "category": segs[-1].get("category")})
     segs = _merge_adjacent(segs)    # 切开后可能与原首段同类型，再合并
     out: list[dict] = []
     last = -1
@@ -165,7 +174,8 @@ def canonicalize(raw) -> list[dict]:
         raise ValueError("slot_segments 不能为空")
     # 统一输出 "HH:MM" 字符串格式（存储 / API / 前端一致）
     return [{"start": to_hhmm(s["start"]), "type": s["type"],
-             "module": s.get("module")} for s in out]
+             "module": s.get("module"), "category": s.get("category")}
+            for s in out]
 
 
 def segments() -> list[dict]:
@@ -176,7 +186,8 @@ def segments() -> list[dict]:
     raw = runtime_config.get("slot_segments")
     if raw is not None:
         return canonicalize(raw)
-    return [{"start": to_hhmm(s["start"]), "type": s["type"], "module": None}
+    return [{"start": to_hhmm(s["start"]), "type": s["type"], "module": None,
+             "category": None}
             for s in fill_partition(_legacy_raw())]
 
 
@@ -187,7 +198,7 @@ def current_slot(now: dt.datetime | None = None) -> str:
 
 
 def current_segment(now: dt.datetime | None = None) -> dict | None:
-    """当前分钟 → 命中的完整分段（含 type / module）；无命中返回 None。"""
+    """当前分钟 → 命中的完整分段（含 type / module / category）；无命中返回 None。"""
     now = now or dt.datetime.now()
     minutes = now.hour * 60 + now.minute
     segs = segments()
@@ -201,12 +212,13 @@ def current_segment(now: dt.datetime | None = None) -> dict | None:
 
 def segment_start(now: dt.datetime | None = None,
                   typ: str | None = None,
-                  module: str | None = None) -> dt.datetime | None:
-    """当前命中段（type/module 匹配时）的开始时刻（绝对时间）；无命中返回 None。
+                  module: str | None = None,
+                  category: str | None = None) -> dt.datetime | None:
+    """当前命中段（type/module/category 匹配时）的开始时刻（绝对时间）；无命中返回 None。
 
-    跨午夜连续段：末段与首段 type+module 相同 → 0 点后首段视为前一日的延续，
+    跨午夜连续段：末段与首段 type+module+category 相同 → 0 点后首段视为前一日的延续，
     开始时刻追溯到前一天末段的 start（如 22:02 历史故事 → 次日 00:00 历史故事，
-    段开始仍为前一日 22:02，0 点不换内容）。typ/module 为 None 表示不限制。
+    段开始仍为前一日 22:02，0 点不换内容）。typ/module/category 为 None 表示不限制。
     """
     now = now or dt.datetime.now()
     minutes = now.hour * 60 + now.minute
@@ -224,12 +236,15 @@ def segment_start(now: dt.datetime | None = None,
         return None
     if module is not None and hit.get("module") != module:
         return None
+    if category is not None and hit.get("category") != category:
+        return None
     day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = _start_to_minutes(hit["start"])
-    # 跨午夜延续：当前是首段（00:00 起）且末段（前一天最后一刻）与首段同 type+module
+    # 跨午夜延续：当前是首段（00:00 起）且末段（前一天最后一刻）与首段同 type+module+category
     if hit_i == 0 and len(segs) > 1:
         last = segs[-1]
-        if last["type"] == hit["type"] and last.get("module") == hit.get("module"):
+        if last["type"] == hit["type"] and last.get("module") == hit.get("module") \
+                and last.get("category") == hit.get("category"):
             last_start = _start_to_minutes(last["start"])
             if last_start is not None:
                 return day - dt.timedelta(days=1) + dt.timedelta(minutes=last_start)

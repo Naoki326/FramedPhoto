@@ -38,16 +38,16 @@ def test_canonicalize_basic():
         {"start": "19:00", "type": "free"},
     ]
     assert slots.canonicalize(raw) == [
-        {"start": "00:00", "type": "weather", "module": None},
-        {"start": "08:00", "type": "photo", "module": None},
-        {"start": "19:00", "type": "free", "module": None},
+        {"start": "00:00", "type": "weather", "module": None, "category": None},
+        {"start": "08:00", "type": "photo", "module": None, "category": None},
+        {"start": "19:00", "type": "free", "module": None, "category": None},
     ]
 
 
 def test_canonicalize_accepts_int_starts():
     # 兼容旧存储格式（分钟整数）
     assert slots.canonicalize([{"start": 480, "type": "photo"}]) == [
-        {"start": "00:00", "type": "photo", "module": None},
+        {"start": "00:00", "type": "photo", "module": None, "category": None},
     ]
 
 
@@ -68,7 +68,7 @@ def test_canonicalize_wraps_first_to_midnight():
         {"start": "08:00", "type": "photo"},
         {"start": "19:00", "type": "free"},
     ])
-    assert canon[0] == {"start": "00:00", "type": "free", "module": None}
+    assert canon[0] == {"start": "00:00", "type": "free", "module": None, "category": None}
     assert canon[-1]["type"] == "free"
     for a, b in zip(canon, canon[1:]):
         assert slots.to_minutes(a["start"]) < slots.to_minutes(b["start"])
@@ -134,9 +134,9 @@ def test_segments_synthesizes_legacy():
          patch("app.slots.effective", lambda k, s, **kw: fake.get(k, getattr(s, k, None))):
         segs = slots.segments()
         assert segs == [
-            {"start": "00:00", "type": "weather", "module": None},
-            {"start": "08:00", "type": "photo", "module": None},
-            {"start": "19:00", "type": "free", "module": None},
+            {"start": "00:00", "type": "weather", "module": None, "category": None},
+            {"start": "08:00", "type": "photo", "module": None, "category": None},
+            {"start": "19:00", "type": "free", "module": None, "category": None},
         ]
 
 
@@ -149,8 +149,8 @@ def test_segments_legacy_cross_day():
     with patch("app.slots.runtime_config.get", return_value=None), \
          patch("app.slots.effective", lambda k, s, **kw: fake.get(k, getattr(s, k, None))):
         segs = slots.segments()
-        assert segs[0] == {"start": "00:00", "type": "free", "module": None}   # 跨天段 00:00 起
-        assert segs[-1] == {"start": "21:00", "type": "free", "module": None}
+        assert segs[0] == {"start": "00:00", "type": "free", "module": None, "category": None}   # 跨天段 00:00 起
+        assert segs[-1] == {"start": "21:00", "type": "free", "module": None, "category": None}
         for t, expect in [("06:00", "free"), ("08:00", "photo"), ("20:00", "photo"), ("21:00", "free")]:
             assert slots.current_slot(_t(t)) == expect, t
 
@@ -174,8 +174,8 @@ def test_segments_prefers_slot_segments():
     stored = [{"start": "00:00", "type": "free"}, {"start": "12:00", "type": "photo"}]
     with patch("app.slots.runtime_config.get", return_value=stored):
         assert slots.segments() == [
-            {"start": "00:00", "type": "free", "module": None},
-            {"start": "12:00", "type": "photo", "module": None},
+            {"start": "00:00", "type": "free", "module": None, "category": None},
+            {"start": "12:00", "type": "photo", "module": None, "category": None},
         ]
 
 
@@ -206,9 +206,9 @@ def test_segments_synthesizes_from_legacy_news_keys():
         "slot_news": "19:00-24:00", "slot_news_enabled": True,
     })
     assert slots.segments() == [
-        {"start": "00:00", "type": "weather", "module": None},
-        {"start": "08:00", "type": "photo", "module": None},
-        {"start": "19:00", "type": "free", "module": None},
+        {"start": "00:00", "type": "weather", "module": None, "category": None},
+        {"start": "08:00", "type": "photo", "module": None, "category": None},
+        {"start": "19:00", "type": "free", "module": None, "category": None},
     ]
 
 
@@ -328,7 +328,7 @@ def test_canonicalize_merges_only_same_module():
 def test_canonicalize_wrap_keeps_module():
     # 跨天切开时 00:00 段继承最后一段的固定模块（单段覆盖全天）
     canon = slots.canonicalize([{"start": "08:00", "type": "free", "module": "今日新闻"}])
-    assert canon == [{"start": "00:00", "type": "free", "module": "今日新闻"}]
+    assert canon == [{"start": "00:00", "type": "free", "module": "今日新闻", "category": None}]
 
 
 def test_canonicalize_rejects_bad_module():
@@ -347,3 +347,67 @@ def test_current_segment_returns_module():
         assert slots.current_segment(_t("09:00"))["type"] == slots.SLOT_FREE
         assert slots.current_segment(_t("15:00"))["module"] is None
         assert slots.current_slot(_t("09:00")) == slots.SLOT_FREE
+
+
+# ---------- 照片时段绑定分类（#25，ADR-0006） ----------
+
+def test_canonicalize_keeps_photo_category():
+    """照片时段可绑定分类：canonicalize 保留 category 字段。"""
+    canon = slots.canonicalize([
+        {"start": "00:00", "type": "photo", "category": "宝宝"},
+        {"start": "12:00", "type": "photo"},
+        {"start": "19:00", "type": "free"},
+    ])
+    assert canon[0]["type"] == "photo"
+    assert canon[0]["category"] == "宝宝"
+    assert canon[1]["category"] is None      # 未绑定 = 全库
+    assert canon[2]["category"] is None      # 非照片段忽略 category
+
+
+def test_canonicalize_merges_photo_only_same_category():
+    """相邻 photo 段须同分类才合并：不同分类不合并。"""
+    canon = slots.canonicalize([
+        {"start": "00:00", "type": "photo", "category": "宝宝"},
+        {"start": "08:00", "type": "photo", "category": "宝宝"},   # 同分类 → 合并
+        {"start": "12:00", "type": "photo", "category": "婚礼视频"},
+    ])
+    starts = [slots.to_minutes(s["start"]) for s in canon]
+    assert starts == [0, 720]
+    assert canon[0]["category"] == "宝宝"
+    assert canon[1]["category"] == "婚礼视频"
+
+
+def test_canonicalize_rejects_bad_category():
+    """非法分类（非字符串）拒绝保存。"""
+    for bad in [123, [], {"x": 1}, True]:
+        with pytest.raises(ValueError):
+            slots.canonicalize([{"start": "08:00", "type": "photo", "category": bad}])
+
+
+def test_current_segment_exposes_category():
+    """current_segment 返回绑定分类（供选片 / 渲染键控）。"""
+    segs = [
+        {"start": "00:00", "type": "photo", "category": "宝宝"},
+        {"start": "12:00", "type": "photo", "category": None},
+    ]
+    with _patch_segments(segs):
+        assert slots.current_segment(_t("09:00"))["category"] == "宝宝"
+        assert slots.current_segment(_t("15:00"))["category"] is None
+
+
+def test_segment_start_category_filter():
+    """segment_start 按分类过滤 + 跨午夜延续（同 type+module+category 才追溯）。"""
+    segs = [
+        {"start": "00:00", "type": "photo", "category": "宝宝"},
+        {"start": "04:30", "type": "photo", "category": None},
+        {"start": "22:02", "type": "photo", "category": "宝宝"},
+    ]
+    with _patch_segments(segs):
+        # 00:30 是「宝宝」段，且末段同为「宝宝」→ 追溯到前一天 22:02
+        assert slots.segment_start(_t("00:30"), typ=slots.SLOT_PHOTO, category="宝宝") == \
+            dt.datetime(2026, 8, 4, 22, 2)
+        # 04:30 之后是未绑定分类段 → 用 category=None 命中
+        assert slots.segment_start(_t("06:00"), typ=slots.SLOT_PHOTO, category=None) == \
+            dt.datetime(2026, 8, 5, 4, 30)
+        # 指定「宝宝」在 06:00 不命中（该段 category=None）
+        assert slots.segment_start(_t("06:00"), typ=slots.SLOT_PHOTO, category="宝宝") is None

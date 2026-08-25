@@ -137,6 +137,14 @@
     <section>
       <h2>照片库（设为今日精选）</h2>
       <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
+      <div id="scoresTabs" style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:8px;padding-bottom:4px"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
+        <span style="color:#6b7280">排序：</span>
+        <select id="scoresSort" style="padding:6px">
+          <option value="memory">回忆度</option>
+          <option value="shot_at">拍摄时间</option>
+        </select>
+      </div>
       <div class="grid" id="scores" style="max-height:480px;overflow-y:auto;padding-right:6px"><div class="empty">加载中…</div></div>
       <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
     </section>
@@ -502,11 +510,15 @@ async function loadDaily() {
       </div>`;
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
 }
+let currentScoreCat = '';   // 当前照片库 tab（'' = 全部，否则为分类名）
+
 async function loadScores() {
   const box = $('scores');
   try {
-    // 管理台照片库应展示全部已分析照片（API 上限 500），而不是只显示前 60 张
-    const { scores } = await api('/analysis/scores?limit=500');
+    const sort = $('scoresSort').value || 'memory';
+    const catParam = currentScoreCat ? ('&category=' + encodeURIComponent(currentScoreCat)) : '';
+    const { scores, summary } = await api('/analysis/scores?limit=500&sort=' + sort + catParam);
+    renderScoreTabs(summary || []);
     if (!scores.length) { box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>'; return; }
     box.innerHTML = scores.map(s => `
       <div class="card">
@@ -519,6 +531,25 @@ async function loadScores() {
         </div>
       </div>`).join('');
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+}
+
+function renderScoreTabs(categories) {
+  const bar = $('scoresTabs');
+  const cat = c => {
+    if (c === currentScoreCat) return 'background:#111;color:#fff;border-color:#111';
+    if (c.count === 0) return 'opacity:.45;border-style:dashed';   // 空分类淡显
+    return '';
+  };
+  const all = [{ name: '全部', count: categories.reduce((n, c) => n + (c.count || 0), 0) }]
+    .concat(categories.slice());
+  bar.innerHTML = all.map(c => `
+    <button class="score-tab" data-cat="${encodeURIComponent(c.name)}" style="padding:6px 12px;border-radius:999px;border:1px solid #d1d5db;background:#f8fafc;font-size:12px;white-space:nowrap;cursor:pointer;${cat(c)}">
+      ${c.name} <span style="font-size:11px;color:#9ca3af">${c.count}</span></button>`).join('');
+  bar.querySelectorAll('.score-tab').forEach(b => b.addEventListener('click', () => {
+    currentScoreCat = decodeURIComponent(b.dataset.cat);
+    if (currentScoreCat === '全部') currentScoreCat = '';
+    loadScores();
+  }));
 }
 async function loadManualPick() {
   try {
@@ -717,6 +748,7 @@ async function uploadFw() {
 
 /* ---- 时段编排与设置 ---- */
 let freeModules = [];
+let photoCategories = [];   // [{name, count}] 供照片时段分类下拉（留空 = 全库）
 
 /* ---- 时段编排：24h 时序控件（磁盘分区式） ---- */
 const TL_TYPES = {
@@ -736,25 +768,26 @@ function tlEnd(i) { return i + 1 < tlSegs.length ? tlSegs[i + 1].start : TL_DAY;
 function tlWidth(i) { return tlEnd(i) - tlSegs[i].start; }
 
 function tlCanon(segs) {
-  // 升序 + 相邻同类型合并（free 段须固定模块相同）+ 首段补到 00:00（跨天切开）
+  // 升序 + 相邻同类型合并（free 段须固定模块相同；photo 段须同分类）+ 首段补到 00:00（跨天切开）
   let out = [];
+  const same = (a, b) => a.type === b.type && a.module === b.module && a.category === b.category;
   for (const s of segs.slice().sort((a, b) => a.start - b.start)) {
     const prev = out[out.length - 1];
-    if (prev && prev.type === s.type && prev.module === s.module) continue;
-    out.push({ start: s.start, type: s.type, module: s.module || null });
+    if (prev && same(prev, s)) continue;
+    out.push({ start: s.start, type: s.type, module: s.module || null, category: s.category || null });
   }
-  if (!out.length) out.push({ start: 0, type: 'photo', module: null });
-  if (out[0].start !== 0) out.unshift({ start: 0, type: out[out.length - 1].type, module: out[out.length - 1].module });
+  if (!out.length) out.push({ start: 0, type: 'photo', module: null, category: null });
+  if (out[0].start !== 0) out.unshift({ start: 0, type: out[out.length - 1].type, module: out[out.length - 1].module, category: out[out.length - 1].category });
   const merged = [];
   for (const s of out) {
     const prev = merged[merged.length - 1];
-    if (prev && prev.type === s.type && prev.module === s.module) continue;
+    if (prev && same(prev, s)) continue;
     merged.push(s);
   }
   return merged;
 }
 function tlLoadSegs(segs) {
-  tlSegs = tlCanon((segs || []).map(x => ({ start: tlParse(x.start), type: x.type, module: x.module || null }))
+  tlSegs = tlCanon((segs || []).map(x => ({ start: tlParse(x.start), type: x.type, module: x.module || null, category: x.category || null }))
     .filter(s => Number.isFinite(s.start) && TL_TYPES[s.type]));
   tlDirty = false; tlRender();
 }
@@ -796,10 +829,13 @@ function tlRender() {
     if (i === tlSegs.length - 1) el.style.borderRight = 'none';
     const t = TL_TYPES[s.type];
     const fixed = s.type === 'free' && s.module;
-    const label = fixed ? `${t.icon} 📌 ${s.module}` : (t.icon + ' ' + t.label);
-    const hint = fixed ? `${t.label} · 固定「${s.module}」` : `${t.label}（每日轮换）`;
-    if (w >= 190) el.innerHTML = `<b>${t.icon}</b> ${fixed ? '📌 ' + escHtml(s.module) : t.label} <span class="tl-range">${tlFmt(s.start)}–${tlFmt(tlEnd(i))}</span>`;
-    else if (w >= 62) el.innerHTML = `${t.icon} ${fixed ? escHtml(s.module) : ''}`;
+    const catBounded = s.type === 'photo' && s.category;
+    const label = fixed ? `${t.icon} 📌 ${s.module}` : (catBounded ? `${t.icon} 🗂 ${s.category}` : (t.icon + ' ' + t.label));
+    const hint = fixed ? `${t.label} · 固定「${s.module}」`
+      : (catBounded ? `${t.label} · 分类「${s.category}」（不出圈）`
+        : (s.type === 'photo' ? `${t.label}（全库）` : `${t.label}（每日轮换）`));
+    if (w >= 190) el.innerHTML = `<b>${t.icon}</b> ${fixed ? '📌 ' + escHtml(s.module) : (catBounded ? '🗂 ' + escHtml(s.category) : t.label)} <span class="tl-range">${tlFmt(s.start)}–${tlFmt(tlEnd(i))}</span>`;
+    else if (w >= 62) el.innerHTML = `${t.icon} ${fixed ? escHtml(s.module) : (catBounded ? escHtml(s.category) : '')}`;
     else el.textContent = t.icon;
     el.title = `${hint} ${tlFmt(s.start)}–${tlFmt(tlEnd(i))}`;
     el.addEventListener('click', ev => { if (tlJustDragged) return; ev.stopPropagation(); tlOpenMenu(i, ev); });
@@ -870,11 +906,20 @@ function tlOpenMenu(i, ev) {
         <option value="">随机轮换（每日换一个模块）</option>
         ${freeModules.map(x => `<option value="${escHtml(x.name)}">${escHtml(x.name)}${x.enabled ? '' : '（未启用）'}</option>`).join('')}
       </select>` : ''}
+    ${s.type === 'photo' ? `
+      <div class="sep"></div>
+      <div style="padding:3px 9px 6px;font-size:11px;color:#374151">🗂 绑定照片分类（留空 = 全库）</div>
+      <select class="tl-cat-sel" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+        <option value="">全部（全库选片）</option>
+        ${photoCategories.map(c => `<option value="${escHtml(c.name)}">${escHtml(c.name)}（${c.count} 张）${c.count === 0 ? ' · 空' : ''}</option>`).join('')}
+      </select>
+      ${categoryCountOf(s.category) === 0 ? '<div id="tlCatWarn" style="padding:4px 9px 0;font-size:11px;color:#d97706">⚠️ 该分类当前 0 张照片，设备将保持上一屏（需先在照片库分析到照片）</div>' : ''}` : ''}
     ${tlSegs.length > 1 ? `<div class="sep"></div><button class="tmi del" data-del="1">🗑 删除此段（并入相邻时段）</button>` : ''}`;
   m.addEventListener('pointerdown', ev => ev.stopPropagation());
   m.querySelectorAll('[data-type]').forEach(b => b.addEventListener('click', () => {
     tlSegs[tlMenuFor].type = b.dataset.type;
     tlSegs[tlMenuFor].module = b.dataset.type === 'free' ? (tlSegs[tlMenuFor].module || null) : null;
+    tlSegs[tlMenuFor].category = b.dataset.type === 'photo' ? (tlSegs[tlMenuFor].category || null) : null;
     tlHideMenu(); tlDirty = true; tlRender();
   }));
   const sel = m.querySelector('.tl-mod-sel');
@@ -883,6 +928,20 @@ function tlOpenMenu(i, ev) {
     sel.addEventListener('change', () => {
       tlSegs[tlMenuFor].module = sel.value || null;
       tlHideMenu(); tlDirty = true; tlRender();
+    });
+  }
+  const sel2 = m.querySelector('.tl-cat-sel');
+  if (sel2) {
+    sel2.value = s.category || '';
+    sel2.addEventListener('change', () => {
+      tlSegs[tlMenuFor].category = sel2.value || null;
+      tlHideMenu(); tlDirty = true; tlRender();
+    });
+  }
+  const catWarn = m.querySelector('#tlCatWarn');
+  if (sel2 && catWarn) {
+    sel2.addEventListener('change', () => {
+      catWarn.style.display = categoryCountOf(sel2.value) === 0 ? '' : 'none';
     });
   }
   const del = m.querySelector('[data-del]');
@@ -909,7 +968,7 @@ function tlOpenMenu(i, ev) {
 function tlHideMenu() { const m = $('tlMenu'); if (m) m.remove(); tlMenuFor = -1; }
 function tlDelete(i) {
   if (tlSegs.length <= 1) return;
-  if (i === 0) { tlSegs[0].type = tlSegs[1].type; tlSegs.splice(1, 1); }  // 首段并入下一段
+  if (i === 0) { tlSegs[0].type = tlSegs[1].type; tlSegs[0].module = tlSegs[1].module; tlSegs[0].category = tlSegs[1].category; tlSegs.splice(1, 1); }  // 首段并入下一段
   else tlSegs.splice(i, 1);                                              // 其余并入上一段
   tlSegs = tlCanon(tlSegs);
   tlHideMenu(); tlDirty = true; tlRender();
@@ -920,13 +979,14 @@ function tlSplit(i, ev) {
   const r = bar.getBoundingClientRect();
   let m = Math.round((ev.clientX - r.left) / r.width * TL_DAY);
   m = Math.max(tlSegs[i].start + TL_MIN, Math.min(tlEnd(i) - TL_MIN, m));
-  tlSegs.splice(i + 1, 0, { start: m, type: tlSegs[i].type, module: tlSegs[i].module || null });
+  tlSegs.splice(i + 1, 0, { start: m, type: tlSegs[i].type, module: tlSegs[i].module || null, category: tlSegs[i].category || null });
   tlHideMenu(); tlDirty = true; tlRender();
 }
 document.addEventListener('pointermove', tlMoveDrag);
 document.addEventListener('pointerup', tlEndDrag);
 document.addEventListener('click', ev => { if (!$('tlMenu') || $('tlMenu').contains(ev.target)) return; tlHideMenu(); });
 function escHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function categoryCountOf(name) { const c = photoCategories.find(x => x.name === name); return c ? c.count : 0; }
 function renderFreeModules() {
   $('freeMods').innerHTML = freeModules.map((m, i) => `
     <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
@@ -961,6 +1021,7 @@ async function loadSettings() {
       : (s.config.qweather_city
         ? '已保存城市名（未解析到 ID，天气将按名称查询）'
         : '留空 = 自动 IP 定位；输入城市名或 ID 后保存即按该城市取天气');
+    photoCategories = (s.categories || []);
     freeModules = (s.config.free_modules || []).map(m => ({ name: m.name || '', enabled: !!m.enabled, prompt: m.prompt || '', style: m.style || '' }));
     renderFreeModules();
     $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置智谱 key，仅纯插画/文字' }）` : '';
@@ -985,7 +1046,8 @@ async function saveSettings() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         slot_segments: tlSegs.map(s => ({ start: tlFmt(s.start), type: s.type,
-          ...(s.module ? { module: s.module } : {}) })),
+          ...(s.module ? { module: s.module } : {}),
+          ...(s.category ? { category: s.category } : {}) })),
         free_rotate: $('sFreeRotate').checked,
         free_modules: freeModules.filter(m => m.name.trim()),
         qweather_city: city,
@@ -1270,6 +1332,7 @@ async function saveWifiConfig() {
   btn.disabled = false;
 }
 
+$('scoresSort') && $('scoresSort').addEventListener('change', () => loadScores());
 loadHealth(); loadDisplay(); loadSync(); loadDaily(); loadScores(); loadManualPick(); loadImages(); loadDevices(); loadFw();
 loadSettings();
 setInterval(loadDevices, 15000);

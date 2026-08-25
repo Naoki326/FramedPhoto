@@ -409,6 +409,7 @@ def test_weather_cache_rolling_cleanup_removes_originals_too(monkeypatch, tmp_pa
     import os
     import time
     wc = _mock_weather(monkeypatch)
+    _set_single_slot("weather")   # 固定天气时段（避免依赖墙钟时刻）
     _fresh_weather_cache()   # 前置：只含本用例预置的旧缓存对
     wc.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1260,3 +1261,115 @@ def test_device_flow_manifest_download_and_fingerprint_dedupe(monkeypatch):
         downloaded.append(item["id"])
         last_id = item["id"]
     assert len(downloaded) == 1, f"内容未变不应重复下载: {downloaded}"
+
+
+# ---------- 照片分类（#25：tab / 时段绑定 / 选片不出圈） ----------
+
+def _seed_category_photo(path: str, memory: float, category_name: str, filename: str = "") -> None:
+    """直接写一条带分类的 photo_scores 记录（隔离照片库路径断言）。"""
+    from app import category, db
+    import os
+    db.upsert_photo_score(path, filename=filename or os.path.basename(path),
+                          memory_score=memory, beauty_score=50, shot_at=None,
+                          shot_source="file", analyzed_at=db.now(),
+                          category=category_name,
+                          content_hash=category.compute_content_hash(path))
+
+
+def test_scores_filter_by_category_and_summary(monkeypatch):
+    """S2：评分列表支持按分类过滤，并返回分类汇总（名称+照片数，tab 排序）。"""
+    from app import category as cat_mod
+    from app.config import settings as settings_mod
+    monkeypatch.setattr(settings_mod, "photo_lib_dir", "/tmp/nonexistent-photolib")
+    # 用真实存在的临时图片路径（上传目录隔离，不占照片库）
+    import tempfile, os
+    lib = tempfile.mkdtemp(prefix="cat-api-")
+    _seed_category_photo(os.path.join(lib, "a.jpg"), 90, "宝宝", "a.jpg")
+    _seed_category_photo(os.path.join(lib, "b.jpg"), 70, "宝宝", "b.jpg")
+    _seed_category_photo(os.path.join(lib, "c.jpg"), 80, "婚礼视频", "c.jpg")
+
+    r = client.get("/api/analysis/scores?limit=500&category=宝宝")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scores"] and all(i["category"] == "宝宝" for i in body["scores"])
+    # 汇总含各分类与照片数
+    cats = {c["name"]: c["count"] for c in body["summary"]}
+    assert cats.get("宝宝", 0) >= 2
+    assert cats.get("婚礼视频", 0) >= 1
+
+
+def test_scores_unknown_category_empty(monkeypatch):
+    """S2：请求不存在分类 → 返回空列表（前端据此显示空 tab）。"""
+    r = client.get("/api/analysis/scores?limit=500&category=不存在分类")
+    assert r.status_code == 200, r.text
+    assert r.json()["scores"] == []
+
+
+def test_settings_bind_valid_category_and_reject_missing(monkeypatch):
+    """S2：编排绑定现存分类合法；绑定不存在分类 → 400 拒绝保存。"""
+    # 现存分类：先种一条照片（category 域已隔离），确保 list_categories 命中
+    from app import category as cat_mod
+    from app.config import settings as settings_mod
+    import tempfile, os
+    monkeypatch.setattr(settings_mod, "photo_lib_dir", "/tmp/nonexistent")
+    lib = tempfile.mkdtemp(prefix="set-cat-")
+    _seed_category_photo(os.path.join(lib, "x.jpg"), 70, "宝宝", "x.jpg")
+    existing = set(cat_mod.list_categories())
+    assert "宝宝" in existing
+
+    # 合法：绑定现存分类
+    r = client.put("/api/settings", json={"slot_segments": [
+        {"start": "00:00", "type": "photo", "category": "宝宝"},
+        {"start": "08:00", "type": "free"},
+    ]})
+    assert r.status_code == 200, r.text
+    segs = r.json()["saved"]["slot_segments"]
+    assert any(s.get("category") == "宝宝" for s in segs)
+
+    # 非法：绑定不存在分类 → 400
+    r = client.put("/api/settings", json={"slot_segments": [
+        {"start": "00:00", "type": "photo", "category": "不存在分类"},
+    ]})
+    assert r.status_code == 400, r.text
+    assert "不存在" in r.json()["detail"]
+
+
+def test_settings_bind_disk_folder_category_even_unanalyzed(monkeypatch):
+    """照片库磁盘上真实存在但尚未分析的文件夹（如 NAS 新同步来的分类）
+    也应可被时段绑定——分类列表由照片记录聚合 + 磁盘目录补足（ADR 需求 14）。"""
+    from app import category as cat_mod
+    from app.config import settings as settings_mod
+    import os
+    disk_lib = tempfile.mkdtemp(prefix="disk-cat-")
+    os.makedirs(os.path.join(disk_lib, "宝宝成长记录"), exist_ok=True)   # 磁盘文件夹，无分析记录
+    monkeypatch.setattr(settings_mod, "photo_lib_dir", disk_lib)
+    monkeypatch.setattr(cat_mod.settings, "photo_lib_dir", disk_lib)
+    r = client.put("/api/settings", json={"slot_segments": [
+        {"start": "00:00", "type": "photo", "category": "宝宝成长记录"},
+    ]})
+    assert r.status_code == 200, r.text
+
+
+def test_content_manifest_per_slot_bound_category(monkeypatch):
+    """S2：照片时段绑定分类后，内容清单返回该分类内选出的每日精选（不出圈）。
+
+    直接 monkeypatch daily 选片返回固定照片，验证 /content 把该照片的
+    清单字段透传（id=daily-* 指纹）。"""
+    from app import daily as daily_mod, runtime_config
+    _set_single_slot("photo")
+    runtime_config.save({"slot_segments": [{"start": "00:00", "type": "photo", "category": "宝宝"}]})
+    import tempfile, os
+    lib = tempfile.mkdtemp(prefix="slot-cat-")
+    photo = os.path.join(lib, "pick.png")
+    with open(photo, "wb") as f:
+        f.write(_png_bytes(color=(200, 60, 60)))
+    # 桩选片：直接返回该照片，渲染时按 key 落盘
+    monkeypatch.setattr(daily_mod, "select_daily_photo",
+                        lambda category=None: ({"path": photo, "filename": "pick.png",
+                                                "caption": "宝宝", "memory_score": None}, True))
+    r = client.get("/api/images/content")
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["source"] == "daily"
+    assert data["images"][0]["id"].startswith("daily-")
+    assert data["images"][0]["filename"] == "pick.png"

@@ -63,6 +63,7 @@
 | POST | `/api/calibration/rainbow/push` | 生成彩虹效果图并直推设备（含浓彩偏置） |
 | PUT | `/api/calibration/chroma-bias` | 设置浓彩偏置 `{"value": 0..4}`（0=忠实混色，ADR-0004） |
 | DELETE | `/api/calibration` | 清除校准，恢复默认占位色 |
+| GET | `/api/analysis/scores?category=X&sort=memory\|shot_at` | 照片评分列表（回忆度/拍摄时间排序），可选按分类过滤；返回 `summary`（分类汇总，供管理台 tab 排序） |
 
 ### 天气城市设置
 

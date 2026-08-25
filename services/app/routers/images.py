@@ -23,6 +23,7 @@ from fastapi.responses import Response
 from PIL import Image
 
 from app import (
+    category,
     content_sources,
     daily,
     db,
@@ -81,14 +82,9 @@ async def upload(file: UploadFile = File(...), dither: bool = True, bg: Backgrou
 def _auto_analyze_upload(path: Path, filename: str) -> None:
     try:
         a = analyze_image(str(path))
-        db.upsert_photo_score(
-            a.path, filename=a.filename or filename, caption=a.caption,
-            description=a.description, type=a.type,
-            memory_score=a.memory_score, beauty_score=a.beauty_score,
-            reason=a.reason, shot_at=a.shot_at, shot_source=a.shot_source,
-            gps_lat=a.gps_lat, gps_lon=a.gps_lon,
-            source=a.source, analyzed_at=db.now(),
-        )
+        # 内容哈希迁移（ADR-0005）：内容库上传图也走同一识别逻辑，
+        # 未被分类（归未分类）；复制/移动语义与照片库一致。
+        category.migrate_or_record(a)
     except Exception as exc:  # noqa: BLE001
         logger.exception("auto analyze upload failed: %s", exc)
 

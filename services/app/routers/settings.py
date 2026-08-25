@@ -10,7 +10,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app import runtime_config, slots
+from app import category, runtime_config, slots
 from app.config import settings
 from app.free_module import default_modules, enabled_modules, pick_module
 
@@ -67,6 +67,7 @@ async def get_settings():
             "qweather_location": runtime_config.effective("qweather_location", settings),
             "weather_style": runtime_config.effective("weather_style", settings),
         },
+        "categories": category.category_summary(),
         "runtime_overrides": list(rc.keys()),
         "status": {
             "ip_city": loc.get("city", ""),
@@ -97,6 +98,26 @@ def _clear_weather_cache():
             except OSError:
                 pass
 
+def _validate_slot_categories(segs: list[dict]) -> None:
+    """校验照片时段绑定的分类是现存分类；不存在 → 400（ADR 需求 18）。
+
+    现存分类 = 已分析照片聚合的分类 + 照片库磁盘第一层文件夹（含尚未分析
+    但 NAS 上真实存在的文件夹，保证编排里能绑到一个真实主题）。
+    """
+    existing = set(category.list_categories())
+    summary = category.category_summary()   # 含磁盘空分类与未分类单列
+    for item in summary:
+        existing.add(item["name"])
+    existing.add(category.UNCATEGORIZED)
+    for seg in segs:
+        if seg.get("type") == slots.SLOT_PHOTO:
+            cat = seg.get("category")
+            if cat and cat not in existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"照片分类不存在: {cat}",
+                )
+
 
 @router.put("")
 def save_settings(body: SettingsBody):
@@ -108,6 +129,7 @@ def save_settings(body: SettingsBody):
         if k == "slot_segments":
             try:
                 patch[k] = slots.canonicalize(v)
+                _validate_slot_categories(patch[k])
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
         elif k == "qweather_location":

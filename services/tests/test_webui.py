@@ -94,3 +94,33 @@ def test_webui_content_manifest_single_request_call_site():
         "内容清单 api() 调用点应唯一（共享单次请求 helper），"
         "面板各自直接请求的形态应消失"
     )
+
+
+# ---------- 照片分类（#25：tab 化 + 排序切换 + 时段绑定分类下拉） ----------
+
+def test_webui_photo_library_tab_container():
+    """管理台照片库页含分类 tab 容器（全部 + 各分类，横向滚动）。"""
+    html = INDEX.read_text("utf-8")
+    assert 'id="scoresTabs"' in html, "照片库页须有分类 tab 容器（scoresTabs）"
+    assert '当前照片库 tab' in html or 'loadScores' in html
+
+
+def test_webui_photo_library_sort_switch():
+    """分类 tab 内可切换排序（回忆度 / 拍摄时间）。"""
+    html = INDEX.read_text("utf-8")
+    assert 'id="scoresSort"' in html, "须有排序切换控件"
+    assert 'value="memory"' in html and 'value="shot_at"' in html, "排序含回忆度/拍摄时间"
+
+
+def test_webui_slot_editor_category_dropdown():
+    """时段编排里照片时段有分类下拉（含「全部」与照片数提示）。"""
+    html = INDEX.read_text("utf-8")
+    assert 'tl-cat-sel' in html, "照片时段须展示分类下拉（tl-cat-sel）"
+    assert '全部（全库选片）' in html, "分类下拉含「全部」选项"
+
+
+def test_webui_photo_slot_empty_category_warning():
+    """编排里绑定 0 张照片的分类时给出警告（设备将保持上一屏）。"""
+    html = INDEX.read_text("utf-8")
+    assert "该分类当前" in html, "空分类须有警告文案"
+    assert "保持上一屏" in html, "警告须说明设备将保持上一屏"

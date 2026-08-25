@@ -22,10 +22,21 @@ _SERVICES = Path(__file__).resolve().parent.parent / "services"
 sys.path.insert(0, str(_SERVICES))
 os.chdir(_SERVICES)
 
-from app import db  # noqa: E402
+from app import category, db  # noqa: E402
 from app.analyzer import analyze_image  # noqa: E402
 
 SUPPORTED = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".bmp", ".tiff"}
+
+
+def _refresh_category_record(path: str) -> None:
+    """刷新单张照片的分类归属（按 path 第一段推导），保留已有评分；
+    无记录则建一条待分析占位（分类先就位）。不触发重新 VLM 分析。"""
+    row = db.get_photo_score(path)
+    cat = category.derive_category(path)
+    if row is None:
+        db.upsert_photo_score(path, filename=os.path.basename(path), category=cat)
+    else:
+        db.upsert_photo_score(path, category=cat)
 
 
 def collect_images(root: Path) -> list[Path]:
@@ -67,7 +78,12 @@ def main() -> int:
         print("没有找到图片")
         return 1
 
-    # 断点续跑：跳过已分析
+    # 断点续跑：跳过已分析；但分类归属是「由 path 第一段推导」的另一维度，
+    # 与是否已分析无关——所有扫描到的照片都刷新一次分类（含历史记录回填），
+    # 不触发重新 VLM 分析（ADR-0005 分类推导与评分解耦）。
+    for p in images:
+        _refresh_category_record(str(p))
+
     pending = []
     for p in images:
         row = db.get_photo_score(str(p))
@@ -86,14 +102,9 @@ def main() -> int:
             except Exception as exc:  # 单张失败不阻塞
                 print(f"  失败 {p.name}: {exc}")
                 continue
-            db.upsert_photo_score(
-                a.path, filename=a.filename, caption=a.caption,
-                description=a.description, type=a.type,
-                memory_score=a.memory_score, beauty_score=a.beauty_score,
-                reason=a.reason, shot_at=a.shot_at, shot_source=a.shot_source,
-                gps_lat=a.gps_lat, gps_lon=a.gps_lon,
-                source=a.source, analyzed_at=db.now(),
-            )
+            # 内容哈希迁移：移动（旧路径文件不存在）→ 迁移保留评分；
+            # 复制 → 并存两条记录；不命中 → 正常新分析（ADR-0005）
+            category.migrate_or_record(a)
             done += 1
             if done % 10 == 0 or done == len(pending):
                 el = time.time() - t0

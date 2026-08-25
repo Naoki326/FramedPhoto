@@ -122,13 +122,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             gps_lon         REAL,
             source          TEXT DEFAULT '',
             analyzed_at     REAL,
-            used_at         REAL
+            used_at         REAL,
+            category        TEXT DEFAULT '',
+            content_hash    TEXT DEFAULT ''
         );
         """
     )
     conn.commit()
     # 存量库兼容：补新列
     for col, ddl in (("shot_source", "ALTER TABLE photo_scores ADD COLUMN shot_source TEXT DEFAULT ''"),
+                     ("category", "ALTER TABLE photo_scores ADD COLUMN category TEXT DEFAULT ''"),
+                     ("content_hash", "ALTER TABLE photo_scores ADD COLUMN content_hash TEXT DEFAULT ''"),
                      ("wifi_ssid", "ALTER TABLE devices ADD COLUMN wifi_ssid TEXT DEFAULT ''"),
                      ("wifi_password", "ALTER TABLE devices ADD COLUMN wifi_password TEXT DEFAULT ''"),
                      ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0"),
@@ -272,13 +276,22 @@ def delete_photo_score(path: str) -> None:
         conn.commit()
 
 
-def list_photo_scores(limit: int = 200, analyzed_only: bool = True) -> list[dict]:
+def list_photo_scores(limit: int = 200, analyzed_only: bool = True,
+                      category: str | None = None) -> list[dict]:
+    """照片评分列表；可选按分类过滤（category=None 不限制）。"""
     sql = "SELECT * FROM photo_scores"
+    where = []
     if analyzed_only:
-        sql += " WHERE analyzed_at IS NOT NULL"
+        where.append("analyzed_at IS NOT NULL")
+    if category is not None:
+        where.append("category = ?")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY COALESCE(memory_score, 0) DESC LIMIT ?"
+    params = [category] if category is not None else []
+    params.append(limit)
     with _lock:
-        rows = _get_conn().execute(sql, (limit,)).fetchall()
+        rows = _get_conn().execute(sql, tuple(params)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -286,8 +299,46 @@ def mark_photo_used(path: str, ts: float) -> None:
     upsert_photo_score(path, used_at=ts)
 
 
-def select_daily_candidates(target_md: tuple[int, int], min_score: float, limit: int = 20) -> list[dict]:
-    """历史上的今天：月-日 匹配所有年份的照片（须有真实 EXIF 拍摄时间）。"""
+def list_categories() -> list[str]:
+    """所有非空照片分类（按照片记录聚合；空分类由磁盘目录补足）。"""
+    with _lock:
+        rows = _get_conn().execute(
+            "SELECT DISTINCT category FROM photo_scores WHERE category != ''").fetchall()
+    return sorted(r[0] for r in rows)
+
+
+def category_counts() -> dict[str, int]:
+    """分类 → 已分析照片数（供 tab 排序与空分类合并显示；空串按未分类归并）。"""
+    with _lock:
+        rows = _get_conn().execute(
+            "SELECT COALESCE(NULLIF(category, ''), '未分类') AS cat, COUNT(*) "
+            "FROM photo_scores WHERE analyzed_at IS NOT NULL GROUP BY cat").fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def photo_content_hash(path: str) -> str | None:
+    """照片记录的内容哈希（迁移识别用）；无则 None。"""
+    row = get_photo_score(path)
+    if not row or not row.get("content_hash"):
+        return None
+    return row["content_hash"]
+
+
+def find_photo_by_hash(content_hash: str) -> dict | None:
+    """按内容哈希查记录（迁移识别）；命中返回记录，未命中返回 None。"""
+    if not content_hash:
+        return None
+    with _lock:
+        row = _get_conn().execute(
+            "SELECT * FROM photo_scores WHERE content_hash = ?", (content_hash,)).fetchone()
+    return dict(row) if row else None
+
+
+def select_daily_candidates(target_md: tuple[int, int], min_score: float, limit: int = 20,
+                            category: str | None = None) -> list[dict]:
+    """历史上的今天：月-日 匹配所有年份的照片（须有真实 EXIF 拍摄时间）。
+
+    category 非空时严格限于该分类（ADR-0006 不出圈）；None=全库。"""
     m, d = target_md
     sql = """
         SELECT * FROM photo_scores
@@ -297,9 +348,13 @@ def select_daily_candidates(target_md: tuple[int, int], min_score: float, limit:
           AND CAST(strftime('%m', shot_at, 'unixepoch') AS INTEGER) = ?
           AND CAST(strftime('%d', shot_at, 'unixepoch') AS INTEGER) = ?
           AND memory_score >= ?
-        ORDER BY memory_score DESC
-        LIMIT ?
     """
+    params: list = [m, d, min_score]
+    if category is not None:
+        sql += " AND category = ?"
+        params.append(category)
+    sql += " ORDER BY memory_score DESC LIMIT ?"
+    params.append(limit)
     with _lock:
-        rows = _get_conn().execute(sql, (m, d, min_score, limit)).fetchall()
+        rows = _get_conn().execute(sql, tuple(params)).fetchall()
     return [dict(r) for r in rows]

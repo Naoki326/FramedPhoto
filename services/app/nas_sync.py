@@ -21,7 +21,7 @@ _ALLOWED_EXT = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 _SCORE_FIELDS = {
     "filename", "caption", "description", "type", "memory_score", "beauty_score",
     "reason", "shot_at", "shot_source", "gps_lat", "gps_lon", "source",
-    "analyzed_at", "used_at",
+    "analyzed_at", "used_at", "category", "content_hash",
 }
 
 
