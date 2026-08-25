@@ -511,6 +511,9 @@ async function loadDaily() {
   } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
 }
 let currentScoreCat = '';   // 当前照片库 tab（'' = 全部，否则为分类名）
+let _allScores = [];        // 当前 tab 的全部评分（渐进渲染用）
+let _shown = 0;             // 已渲染条数
+const SCORE_PAGE = 24;      // 每批渲染张数（首屏即响应，滚动追加）
 
 async function loadScores() {
   const box = $('scores');
@@ -519,9 +522,14 @@ async function loadScores() {
     const catParam = currentScoreCat ? ('&category=' + encodeURIComponent(currentScoreCat)) : '';
     const { scores, summary } = await api('/analysis/scores?limit=500&sort=' + sort + catParam);
     renderScoreTabs(summary || []);
-    if (!scores.length) { box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>'; return; }
-    box.innerHTML = scores.map(s => `
-      <div class="card">
+    _allScores = scores || [];
+    _shown = 0;
+    _renderScores(box, true);
+  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+}
+
+function _card(s) {
+  return `<div class="card">
         <img src="/api/analysis/preview?path=${encodeURIComponent(s.path)}" loading="lazy"
              style="cursor:pointer" onclick="pickDaily('${encodeURIComponent(s.path)}')" title="点击设为今日精选">
         <div class="meta">
@@ -529,9 +537,38 @@ async function loadScores() {
           <div class="row"><span>回忆 ${s.memory_score?.toFixed?.(0) ?? '—'}</span>
             <button onclick="pickDaily('${encodeURIComponent(s.path)}')">设为今日</button></div>
         </div>
-      </div>`).join('');
-  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
+      </div>`;
 }
+
+function _renderScores(box, reset) {
+  if (!_allScores.length) {
+    box.innerHTML = '<div class="empty">暂无分析数据，先运行照片分析</div>';
+    return;
+  }
+  const prevShown = reset ? 0 : _shown;
+  _shown = reset ? Math.min(SCORE_PAGE, _allScores.length) : Math.min(_shown + SCORE_PAGE, _allScores.length);
+  if (reset) {
+    // 首屏：全量重建（tab/排序切换，需清掉旧内容）
+    box.innerHTML = _allScores.slice(0, _shown).map(_card).join('');
+  } else {
+    // 追加：保留已有卡片只插新批（滚动位置不重置）
+    box.insertAdjacentHTML('beforeend', _allScores.slice(prevShown, _shown).map(_card).join(''));
+  }
+  if (_shown < _allScores.length) {
+    box.dataset.more = '1';
+  } else {
+    delete box.dataset.more;
+  }
+}
+
+// 照片库网格滚动到底部附近 → 追加下一批（渐进渲染，避免一次性渲染数百张卡顿）
+$('scores') && $('scores').addEventListener('scroll', () => {
+  const box = $('scores');
+  if (!box.dataset.more) return;
+  if (box.scrollTop + box.clientHeight >= box.scrollHeight - 120) {
+    _renderScores(box, false);
+  }
+});
 
 function renderScoreTabs(categories) {
   const bar = $('scoresTabs');

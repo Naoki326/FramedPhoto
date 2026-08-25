@@ -50,6 +50,7 @@ services/app/free_cache/
 services/app/weather_cache/
 services/app/runtime_config.json
 services/app/runtime_config.json.bak-*
+services/preview_cache/
 services/sync_status.json
 
 # 本地私人预览素材（不入库）

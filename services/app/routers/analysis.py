@@ -51,7 +51,13 @@ async def daily_meta():
 
 @router.get("/preview")
 async def photo_preview(path: str):
-    """照片缩略图（管理台照片库网格用）。仅允许 photo_lib_dir / uploads 内文件。"""
+    """照片缩略图（管理台照片库网格用）。仅允许 photo_lib_dir / uploads 内文件。
+
+    磁盘缓存：预览图生成很贵（照片库多为 20MP+ 大图，解码+缩略+JPEG 约百毫秒），
+    无缓存时 404 张网格每次滚动都重新解码，页面严重卡顿。缓存键 = 路径哈希 +
+    文件 mtime（NAS 同步更新照片后 mtime 变化自动重生成，不残留过期缩略图）。
+    """
+    import hashlib
     import io
     from pathlib import Path as P
     from PIL import Image
@@ -64,10 +70,25 @@ async def photo_preview(path: str):
     if not allowed or not p.is_file():
         raise HTTPException(404, "photo not found")
     try:
+        st = p.stat()
+        key = hashlib.sha1(f"{p}:{st.st_size}:{int(st.st_mtime)}".encode()).hexdigest()[:20]
+        cache_dir = P(settings.upload_dir).parent / "preview_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{key}.jpg"
+        if cache_file.is_file():
+            return Response(content=cache_file.read_bytes(), media_type="image/jpeg")
+        # 大图先 draft 降采样再解码，避免全量解码 20MP 原图（几 MB→几百 KB）
         img = Image.open(p)
+        img.draft("RGB", (600, 800))
+        img.load()
         img.thumbnail((300, 400))
         buf = io.BytesIO()
         img.convert("RGB").save(buf, format="JPEG", quality=80)
-        return Response(content=buf.getvalue(), media_type="image/jpeg")
+        data = buf.getvalue()
+        try:
+            cache_file.write_bytes(data)
+        except OSError:
+            pass
+        return Response(content=data, media_type="image/jpeg")
     except Exception:
         raise HTTPException(422, "bad image")
