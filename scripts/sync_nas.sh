@@ -231,6 +231,19 @@ if [ "$RC" -eq 0 ]; then
                  "avg_speed_kb" "${AVG_SPEED_KB}" \
                  "last_sync" "$(date +%s)"
     log "同步完成。接下来可分析：python tools/analyze_photos.py ${LOCAL_PHOTO_DIR} -j 4"
+    # 自动分析（默认开，NAS_AUTO_ANALYZE=0 关闭）：同步后自动跑启发式评分，
+    # 让新同步的照片（如各用户 Frame_* 文件夹）直接进照片库参与分类与选片。
+    # 启发式本地计算不花钱（VLM 分析仍手动），断点续跑只分析新增未分析照片。
+    if [ "${NAS_AUTO_ANALYZE:-1}" = "1" ]; then
+      log "自动启发式分析 ${LOCAL_PHOTO_DIR} …"
+      # analyze_photos.py 内部 os.chdir 到 services/，须传绝对路径（相对路径会失效）
+      ABS_LIB="$(cd "${LOCAL_PHOTO_DIR}" && pwd)"
+      if services/.venv/bin/python "$(pwd)/tools/analyze_photos.py" "${ABS_LIB}" --no-vlm -j "${NAS_ANALYZE_JOBS:-4}"; then
+        log "自动分析完成，新照片已进照片库"
+      else
+        log "自动分析失败（照片仍在照片库，可手动重跑）"
+      fi
+    fi
   fi
 else
   write_status "status" "error" "message" "同步失败（rsync 退出码 ${RC}，详见 ${RSYNC_LOG}）"

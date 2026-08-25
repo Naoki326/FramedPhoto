@@ -61,6 +61,30 @@ PHOTO_LIB_DIR=./photos
 - IPv6 地址在脚本里自动用 `[...]` 包裹（rsync/ssh 要求）。
 - 建议配置 SSH 免密（`ssh-copy-id`）。
 
+### 多用户 Frame 文件夹（家庭共享进照片库）
+
+想让多位家庭成员的手机照片自动进照片库、每人一个独立分类：在 NAS 的 photo
+共享根目录（即 `NAS_PHOTO_DIR` 指向的目录）下，**每个用户建一个
+`Frame_<用户名>` 文件夹**（如 `Frame_naoki`、`Frame_Chen`），把照片放进去即可。
+
+```bash
+# NAS 上（File Station 或命令行）
+mkdir -p /volume1/photo/Frame_naoki    # 每个家庭成员一个
+```
+
+链路（无需额外配置）：
+
+1. 用户把照片放进 `Frame_<用户名>/`（手机传 NAS / File Station 拖入）
+2. 现有每小时同步自动拉取 → 本机 `photos/Frame_<用户名>/`
+3. 同步后**自动启发式分析**（默认开，`NAS_AUTO_ANALYZE=0` 关闭）——新照片直接进照片库
+4. 照片分类 = 文件夹名（`Frame_naoki`），管理台照片库自动出现对应 tab，
+   时段编排可给照片时段绑定该分类（不出圈选片）
+
+要点：
+- 同步脚本只放行图片（过滤 `@eaDir`/缩略图/视频），用户文件夹里放照片即可
+- VLM 深度评分仍手动跑 `tools/analyze_photos.py`（花钱）；自动分析走免费启发式
+- 想关掉自动分析：`.env` 加 `NAS_AUTO_ANALYZE=0`；并发线程 `NAS_ANALYZE_JOBS=4`
+
 ### 定时任务（macOS launchd）
 
 ```bash
