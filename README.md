@@ -275,6 +275,9 @@ python tools/analyze_photos.py /path/to/photos -j 4
 # 生成校准图、比较调色板
 python tools/generate_calibration_chart.py --help
 python tools/compare_palettes.py --help
+
+# 显示管线变更后从原图重渲染缓存帧（不重新生成内容）
+python tools/rerender_frames.py --dry
 ```
 
 服务端测试：
