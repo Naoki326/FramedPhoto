@@ -72,12 +72,11 @@ uvicorn app.main:app --reload
 
 管理台「天气卡片风格」下方城市输入框：输入中文城市名（如 `上海宝山`）保存时自动解析为和风城市 ID（`/api/weather/lookup`），也支持直接填城市 ID / 经纬度 / 拼音；留空回退 IP 自动定位。天气缓存按 location 指纹，改城市后立即生效。
 
-### NAS 照片同步（sync_nas.sh）
+### 照片库文件夹管理
 
-- 增量同步在后台运行时，状态写入 `services/sync_status.json`（约每 5 秒更新一次），
-  Web 管理台「NAS 照片同步」板块同步展示进度
-- 日志：`/tmp/sync_nas.log`（脚本运行日志）与 `services/sync_nas.log`（rsync 明细）
-- 完成后状态变为 `done`；同步细节与踩坑见 [docs/nas.md](docs/nas.md)
+- 照片完全本地管理（ADR-0007）：管理台上传照片到所选文件夹，文件夹即分类，
+  可新建 / 重命名（连带迁移评分与时段绑定）/ 删除空文件夹
+- 上传照片后台自动启发式分析（免费），配置 VLM 后可手动深度评分
 
 ## 图片转换 CLI
 

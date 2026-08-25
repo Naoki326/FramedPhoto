@@ -26,9 +26,8 @@
 - AI 从照片库里找出“历史上的今天”，并配上一句回忆文案；
 - 你给自由模块写一段 prompt，它就能每天生成一张不同的图文卡片；
 - 设备主动从服务端拉取内容，显示完成后深度休眠，安静、省电地待在墙上。
-- 内容库里的照片可一键推送到 NAS 归档，归档后自动转入照片库参与“历史上的今天”选片。
 
-这是一个从 **ESP32 固件、FastAPI 服务端、图片渲染，到 NAS 与 AI 内容生成** 的完整端到端项目。
+这是一个从 **ESP32 固件、FastAPI 服务端、图片渲染，到 AI 内容生成** 的完整端到端项目。
 
 ## 一眼看懂
 
@@ -39,7 +38,7 @@
 | **六色渲染** | 1200 × 1600 图片适配、E Ink Spectra 6 色板量化、抖动与真机校准 |
 | **长续航设备** | ESP32-S3 WiFi 拉取内容，显示后深度休眠（默认 30 分钟 RTC 唤醒，内容未变不刷屏） |
 | **远程维护** | 双 OTA 分区、SHA-256 校验、失败回滚 |
-| **私人照片库** | 群晖 NAS 通过 `rsync over SSH` 增量同步（支持手动触发 / 定时同步 / 单图推送），掉线时不影响本地使用 |
+| **私人照片库** | 管理台上传照片到文件夹（文件夹即分类），可新建 / 重命名 / 删除空文件夹，上传后自动 AI 评分 |
 
 ## 内容会这样流动
 
@@ -133,7 +132,7 @@ LLM 失败时降级为模块标题或纯文字卡片；文生图失败时仍可�
 
 ```mermaid
 flowchart LR
-    A[本地照片 / 群晖 NAS] -->|rsync over SSH| B
+    A[管理台上传照片] --> B
     B[FastAPI 服务端] --> C[AI 分析与每日精选]
     B --> D[Pillow 图片转换]
     C --> D
@@ -170,7 +169,7 @@ flowchart LR
 - Python 3.12+
 - ESP-IDF 6.0.x（仅编译固件时需要）
 - 一块 ESP32-S3 开发板与 GDEB0709E01 模组
-- 可选：VLM、天气服务、图像生成服务、群晖 NAS
+- 可选：VLM、天气服务、图像生成服务
 
 ### 1. 启动服务端
 
@@ -191,7 +190,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload
 - Web 管理台：<http://127.0.0.1:8010>
 - API 文档：<http://127.0.0.1:8010/docs>
 
-最小配置只需要启动服务端即可。AI、天气、NAS 和自由模块都可以在后续按需开启，配置项和示例见 [`services/.env.example`](services/.env.example)。
+最小配置只需要启动服务端即可。AI、天气和自由模块都可以在后续按需开启，配置项和示例见 [`services/.env.example`](services/.env.example)。
 
 ### 2. 编译并烧录固件
 
@@ -230,10 +229,10 @@ FramedPhoto/
 │   └── components/gdey_epd/   # GDEB0709E01 电子纸驱动
 ├── services/                  # FastAPI 服务端与单元测试
 │   └── app/                   # 图片转换、设备管理、内容、OTA、Web UI
-├── docs/                      # 架构、硬件、API、AI、NAS、校准与路线图
+├── docs/                      # 架构、硬件、API、AI、校准与路线图
 │   └── design-preview/        # 屏幕 UI 渲染预览
 ├── tools/                     # 图片分析、调色板比较、校准与模拟工具
-└── scripts/                   # 烧录、NAS 同步、服务部署脚本
+└── scripts/                   # 烧录与服务部署脚本
 ```
 
 ## 进度
@@ -246,7 +245,7 @@ FramedPhoto/
 - [x] AI 照片评分、历史上的今天、回忆文案与启发式降级
 - [x] 可配置自由模块：LLM 内容 + 插画 + 电子纸文字叠加
 - [x] Spectra 6 调色板 v2（校准色空间量化 + 色域外墨水对混色 + 浓彩偏置可调，ADR-0004）与真机校准工具链（管理台「设置 → 屏幕校准」一键生成/推送校准图、彩虹图验证、上传照片采样热加载，见 `docs/calibration.md`）
-- [x] 群晖 NAS `rsync over SSH` 增量同步与掉线容错（管理台「立即同步 NAS」手动触发，`launchd` 定时同步，内容库单图可推送 NAS 并自动转入照片库）
+- [x] 照片库本地化：管理台上传照片到文件夹、文件夹新建 / 重命名 / 删除空文件夹（ADR-0007）
 - [x] 双 OTA 分区、SHA-256 校验与失败回滚
 
 ## 文档导航
@@ -257,7 +256,6 @@ FramedPhoto/
 | [`docs/hardware/gdeb0709e01.md`](docs/hardware/gdeb0709e01.md) | 屏幕规格、引脚映射与硬件资料 |
 | [`docs/api.md`](docs/api.md) | 服务端 API 与设备通信接口 |
 | [`docs/ai-features.md`](docs/ai-features.md) | AI 分析、每日精选与深度休眠 |
-| [`docs/nas.md`](docs/nas.md) | 群晖 NAS 同步与照片库配置 |
 | [`docs/calibration.md`](docs/calibration.md) | 调色板、校准图与真机采样流程 |
 | [`docs/development.md`](docs/development.md) | 本地开发、macOS 部署与服务管理 |
 | [`docs/protocol/fps6-format.md`](docs/protocol/fps6-format.md) | FPS6 文件格式说明 |
@@ -304,9 +302,9 @@ make -C firmware/host_tests   # 编译 + 运行，可用 ASan 检泄漏
 
 这是一个公开仓库，但以下内容只保留在本地，不会进入 Git：
 
-- 个人照片与 NAS 同步目录：`services/photos/`、`services/daily/`
+- 个人照片库：`services/photos/`、`services/daily/`
 - 上传文件、运行时数据库、日志和缓存
-- API key、NAS 密码等环境变量：`services/.env`
+- API key 等环境变量：`services/.env`
 
 开始使用前请检查 `.gitignore`，不要把个人照片、设备运行数据或密钥提交到公开仓库。
 

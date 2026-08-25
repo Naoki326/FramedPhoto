@@ -102,7 +102,7 @@ def _validate_slot_categories(segs: list[dict]) -> None:
     """校验照片时段绑定的分类是现存分类；不存在 → 400（ADR 需求 18）。
 
     现存分类 = 已分析照片聚合的分类 + 照片库磁盘第一层文件夹（含尚未分析
-    但 NAS 上真实存在的文件夹，保证编排里能绑到一个真实主题）。
+    但磁盘上真实存在的文件夹，保证编排里能绑到一个真实主题）。
     """
     existing = set(category.list_categories())
     summary = category.category_summary()   # 含磁盘空分类与未分类单列

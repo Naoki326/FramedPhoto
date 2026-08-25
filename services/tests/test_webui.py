@@ -127,11 +127,12 @@ def test_webui_photo_slot_empty_category_warning():
 
 
 def test_webui_photo_folder_upload_entry():
-    """照片库有家庭共享上传入口：用户文件夹输入 + 多选照片 + 文件夹上传。"""
+    """照片库有上传入口：目标文件夹下拉 + 新建按钮 + 多选照片 + 文件夹上传。"""
     html = INDEX.read_text("utf-8")
-    assert 'id="frameUploader"' in html, "照片库页须有 Frame 上传入口容器"
+    assert 'id="frameUploader"' in html, "照片库页须有上传入口容器"
     assert 'webkitdirectory' in html, "须支持按文件夹选择上传（webkitdirectory）"
-    assert 'id="frameUser"' in html, "须有目标文件夹（用户）选择输入"
+    assert 'id="frameFolder"' in html, "须有目标文件夹选择下拉"
+    assert 'newPhotoFolder' in html, "须有新建文件夹入口"
 
 
 def test_webui_photo_library_split_into_own_tab():

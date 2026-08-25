@@ -158,7 +158,7 @@ function bootRoutes(overrides = []) {
       images: [{ id: 'd1', filename: '回忆.png', preview_url: '/api/images/daily/preview',
                  caption: '测试回忆', date: '2026-08-17', memory_score: 9 }],
       source: 'daily' } },
-    { url: '/api/sync/status', body: { status: 'idle', percent: 0 } },
+    { url: '/api/analysis/folders', body: { folders: [] } },
     { url: '/api/analysis/scores?limit=500', body: { scores: [] } },
     { url: '/api/images/daily/selected', body: { path: null } },
     { url: '/api/images', body: { images: [] } },
@@ -192,9 +192,9 @@ test('页面载入：内容清单单次请求共享，两个面板照常渲染',
   // 两个面板都消费了同一份清单数据
   include(el('displayMode')._history.innerHTML.join(''), '时段自动内容');
   include(el('daily')._history.innerHTML.join(''), '回忆度');
-  // 健康检查（绝对路径）/ 分析分数 / 同步状态迁移后照常请求
+  // 健康检查（绝对路径）/ 文件夹列表 / 分析分数照常请求
   // （分析分数带 sort/category 参数，前缀匹配）
-  for (const url of ['/health', '/api/analysis/scores?limit=500', '/api/sync/status']) {
+  for (const url of ['/health', '/api/analysis/folders', '/api/analysis/scores?limit=500']) {
     assert.ok(calls.some(c => url === '/health' || url === '/api/sync/status' ? c.url === url : c.url.startsWith(url)), '缺少请求 ' + url);
   }
   include(lastText(el, 'health'), 'EPD ok');

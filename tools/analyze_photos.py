@@ -49,11 +49,11 @@ def collect_images(root: Path) -> list[Path]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("photo_dir", help="照片库目录（NAS 挂载点路径）")
+    ap.add_argument("photo_dir", help="照片库目录（如 services/photos）")
     ap.add_argument("--no-vlm", action="store_true", help="强制使用启发式评分（不调用 VLM）")
     ap.add_argument("-j", "--concurrency", type=int, default=1, help="并发线程数")
     ap.add_argument("--prune-stale", action="store_true",
-                    help="清理数据库中文件已不存在的失效记录（NAS 掉线/照片删除后）")
+                    help="清理数据库中文件已不存在的失效记录（照片删除后）")
     args = ap.parse_args()
 
     if args.prune_stale:
@@ -67,10 +67,7 @@ def main() -> int:
     root = Path(args.photo_dir)
     if not root.is_dir():
         print(f"[错误] 照片库目录不可达: {root}")
-        print("  接入群晖 NAS 时请先挂载：")
-        print("    cp services/.env.example services/.env  # 填 NAS_HOST/NAS_SHARE/NAS_USER")
-        print("    ./scripts/mount_nas.sh mount")
-        print("  并把 PHOTO_LIB_DIR 指向挂载点。")
+        print("  请检查 PHOTO_LIB_DIR / 传入路径是否正确（照片库在管理台上传维护）。")
         return 1
 
     images = collect_images(root)

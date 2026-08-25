@@ -90,12 +90,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             width           INTEGER,
             height          INTEGER,
             landscape       INTEGER DEFAULT 0,
-            created_at      REAL,
-            nas_status      TEXT DEFAULT '',
-            nas_path        TEXT DEFAULT '',
-            nas_sha256      TEXT DEFAULT '',
-            nas_synced_at   REAL,
-            nas_error       TEXT DEFAULT ''
+            created_at      REAL
         );
 
         CREATE TABLE IF NOT EXISTS firmware (
@@ -136,12 +131,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
                      ("wifi_ssid", "ALTER TABLE devices ADD COLUMN wifi_ssid TEXT DEFAULT ''"),
                      ("wifi_password", "ALTER TABLE devices ADD COLUMN wifi_password TEXT DEFAULT ''"),
                      ("wifi_pending", "ALTER TABLE devices ADD COLUMN wifi_pending INTEGER DEFAULT 0"),
-                     ("landscape", "ALTER TABLE images ADD COLUMN landscape INTEGER DEFAULT 0"),
-                     ("nas_status", "ALTER TABLE images ADD COLUMN nas_status TEXT DEFAULT ''"),
-                     ("nas_path", "ALTER TABLE images ADD COLUMN nas_path TEXT DEFAULT ''"),
-                     ("nas_sha256", "ALTER TABLE images ADD COLUMN nas_sha256 TEXT DEFAULT ''"),
-                     ("nas_synced_at", "ALTER TABLE images ADD COLUMN nas_synced_at REAL"),
-                     ("nas_error", "ALTER TABLE images ADD COLUMN nas_error TEXT DEFAULT ''")):
+                     ("landscape", "ALTER TABLE images ADD COLUMN landscape INTEGER DEFAULT 0")):
         try:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({ddl.split()[2]})")]
             if col not in cols:
@@ -332,6 +322,47 @@ def find_photo_by_hash(content_hash: str) -> dict | None:
         row = _get_conn().execute(
             "SELECT * FROM photo_scores WHERE content_hash = ?", (content_hash,)).fetchone()
     return dict(row) if row else None
+
+
+def rename_category(old: str, new: str) -> int:
+    """迁移某分类的全部评分记录到新分类：category 改写 + path 前缀替换。
+
+    path 形式可能是绝对路径（/…/photos/宝宝/x.jpg）或相对（photos/宝宝/x.jpg）；
+    统一按「路径段边界」把第一个等于 old 的段替换为 new（仅当后面还有段，
+    即匹配的是目录段而非文件名）。评分文案等其余字段全部保留。
+    返回迁移条数。
+    """
+    with _lock:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT * FROM photo_scores WHERE category = ?", (old,)).fetchall()
+        for r in rows:
+            old_path = r["path"]
+            parts = old_path.replace("\\", "/").split("/")
+            new_path = old_path
+            for i, seg in enumerate(parts):
+                if seg == old and i + 1 < len(parts):
+                    parts[i] = new
+                    new_path = "/".join(parts)
+                    break
+            fields = {k: r[k] for k in r.keys() if k != "path"}
+            fields["category"] = new
+            conn.execute("DELETE FROM photo_scores WHERE path = ?", (old_path,))
+            cols = ", ".join(["path", *fields.keys()])
+            marks = ", ".join("?" * (len(fields) + 1))
+            conn.execute(f"INSERT INTO photo_scores ({cols}) VALUES ({marks})",
+                         (new_path, *fields.values()))
+        conn.commit()
+        return len(rows)
+
+
+def delete_category_scores(category: str) -> int:
+    """删除某分类的全部评分记录（文件夹删除时清残留）；返回删除条数。"""
+    with _lock:
+        conn = _get_conn()
+        cur = conn.execute("DELETE FROM photo_scores WHERE category = ?", (category,))
+        conn.commit()
+    return cur.rowcount
 
 
 def select_daily_candidates(target_md: tuple[int, int], min_score: float, limit: int = 20,

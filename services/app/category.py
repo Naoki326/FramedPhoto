@@ -1,9 +1,10 @@
 """
-category.py — 照片分类：镜像 NAS 照片库第一层文件夹名（ADR-0005）。
+category.py — 照片分类：照片库第一层文件夹名（ADR-0007）。
 
 一张照片恰好属于一个分类：分类由路径第一段推导（无目录分隔符 = 未分类），
 深层子目录归其第一层祖先。分类没有独立于照片的生命周期——分类列表由照片
-记录聚合而来（空分类的 tab 由磁盘目录列表补足）。不做打标 / 手动指派 / 改名。
+记录聚合而来（空分类的 tab 由磁盘目录列表补足）。照片库完全本地管理：
+文件夹经管理台新建 / 重命名 / 删除（ADR-0007），不再与 NAS 同步。
 
 内容哈希迁移（ADR-0005）：分析扫描发现新路径时按内容哈希查既有记录——
 命中且旧路径文件已不存在 → 迁移（更新 path 与分类，保留评分文案）；
@@ -12,13 +13,18 @@ category.py — 照片分类：镜像 NAS 照片库第一层文件夹名（ADR-0
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 from app import db
 from app.config import settings
 
-# 未分类的特殊标记（NAS 照片库根目录散照所属分类，正常参与选片）
+# 未分类的特殊标记（照片库根目录散照 / 内容库上传图所属分类，正常参与选片）
 UNCATEGORIZED = "未分类"
+
+# 文件夹名：中文/字母/数字/下划线/横线，无路径分隔符（防穿越）；
+# 与上传端点共用同一套规则（routers/analysis.py）
+FOLDER_NAME = re.compile(r"^[\w\-\u4e00-\u9fff]{1,64}$")
 
 
 def derive_category(path: str) -> str:
@@ -83,7 +89,7 @@ def category_summary() -> list[dict]:
 
 
 def _disk_first_level_dirs() -> list[str]:
-    """照片库根目录第一层文件夹名（补足空分类 tab，忠实镜像 NAS 结构）。"""
+    """照片库根目录第一层文件夹名（补足空分类 tab）。"""
     root = Path(settings.photo_lib_dir)
     try:
         if not root.is_dir():
@@ -91,6 +97,83 @@ def _disk_first_level_dirs() -> list[str]:
         return sorted(d.name for d in root.iterdir() if d.is_dir())
     except OSError:
         return []
+
+
+# ---------- 文件夹管理（ADR-0007：新建 / 重命名 / 删除） ----------
+
+def valid_folder_name(name: str) -> bool:
+    """文件夹名合法性：字符集 / 长度 / 非保留名（未分类）。"""
+    return bool(FOLDER_NAME.fullmatch(name or "")) and name != UNCATEGORIZED
+
+
+def folder_path(name: str) -> Path:
+    return Path(settings.photo_lib_dir) / name
+
+
+def folder_exists(name: str) -> bool:
+    return folder_path(name).is_dir()
+
+
+def folder_photo_count(name: str) -> int:
+    """文件夹下实际图片文件数（递归；不只已分析的记录）。"""
+    exts = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".bmp", ".tiff", ".tif"}
+    try:
+        return sum(1 for p in folder_path(name).rglob("*") if p.is_file() and p.suffix.lower() in exts)
+    except OSError:
+        return 0
+
+
+def list_folders() -> list[dict]:
+    """照片库文件夹列表（磁盘第一层目录 + 实际照片数），按名称排序。
+
+    与 category_summary（tab 排序，按已分析记录计数）不同，这里足磁盘事实：
+    供上传下拉与文件夹管理用。"""
+    names = _disk_first_level_dirs()
+    return [{"name": n, "count": folder_photo_count(n)} for n in names]
+
+
+def create_folder(name: str) -> Path:
+    """新建空文件夹（成为新分类 tab）。名字非法 / 重名抛 ValueError。"""
+    if not valid_folder_name(name):
+        raise ValueError(f"非法文件夹名: {name!r}（仅中文/字母/数字/下划线/横线，且不可叫「{UNCATEGORIZED}」）")
+    if folder_exists(name):
+        raise FileExistsError(f"文件夹已存在: {name}")
+    path = folder_path(name)
+    path.mkdir(parents=True, exist_ok=False)
+    return path
+
+
+def rename_folder(old: str, new: str) -> int:
+    """重命名文件夹：mv 目录 + 迁移评分记录（path 前缀与分类，ADR-0007）。
+
+    返回迁移的评分记录条数。名字非法 / 源不存在 / 目标重名抛异常。
+    编排层联动（时段绑定 / 手动指定今日精选）由路由层负责。
+    """
+    if not valid_folder_name(new):
+        raise ValueError(f"非法文件夹名: {new!r}（仅中文/字母/数字/下划线/横线，且不可叫「{UNCATEGORIZED}」）")
+    if not folder_exists(old):
+        raise FileNotFoundError(f"文件夹不存在: {old}")
+    if folder_exists(new):
+        raise FileExistsError(f"目标文件夹已存在: {new}")
+    folder_path(old).rename(folder_path(new))
+    return db.rename_category(old, new)
+
+
+def delete_folder(name: str) -> int:
+    """删除空文件夹（连评分残留记录一并清理），返回清除的记录条数。
+
+    仅允许删除空文件夹（非空抛 OSError）；磁盘残留记录（文件已不在但
+    评分还在）随删除一并清掉，避免 tab 幽灵计数。
+    """
+    if name == UNCATEGORIZED:
+        raise ValueError(f"「{UNCATEGORIZED}」不是文件夹，不可删除")
+    path = folder_path(name)
+    if not path.is_dir():
+        raise FileNotFoundError(f"文件夹不存在: {name}")
+    if any(path.iterdir()):
+        raise OSError(f"文件夹非空，请先清空（移出或删除照片）: {name}")
+    path.rmdir()
+    return db.delete_category_scores(name)
 
 
 def compute_content_hash(path: str) -> str:

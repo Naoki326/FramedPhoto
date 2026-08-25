@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
 from app.config import settings
-from app.routers import analysis, calibration, devices, images, ota, sync
+from app.routers import analysis, calibration, devices, images, ota
 from app.routers import settings as settings_router
 from app.weather_lookup import router as weather_lookup_router
 
@@ -46,7 +46,6 @@ app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 app.include_router(weather_lookup_router, prefix="/api/weather", tags=["weather"])
 app.include_router(calibration.router, prefix="/api/calibration", tags=["calibration"])
-app.include_router(sync.router, prefix="/api/sync", tags=["sync"])
 
 
 @app.get("/", response_class=HTMLResponse, tags=["web"])

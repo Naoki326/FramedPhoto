@@ -26,8 +26,9 @@
 
 ## 数据源与部署现状
 
-- **照片数据源**：群晖 NAS 经 rsync over SSH 增量同步到本机 `services/photos`
-  （NAS 掉线不影响本地分析/每日精选），细节见 `docs/nas.md`
+- **照片数据源**：照片库完全本地管理（ADR-0007）——管理台上传照片到
+  所选文件夹（文件夹即分类，可新建 / 重命名 / 删除空文件夹），
+  落盘 `services/photos`
 - **部署**：macOS launchd 服务（`com.framedphoto.service`，开机自启 + KeepAlive），
   监听 `0.0.0.0:8010`，详见 `docs/development.md`
 

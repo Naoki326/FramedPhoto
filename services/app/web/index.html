@@ -90,7 +90,6 @@
     <button class="tab active" data-tab="display">当前显示</button>
     <button class="tab" data-tab="photolib">照片库</button>
     <button class="tab" data-tab="library">内容库</button>
-    <button class="tab" data-tab="sync">同步</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
 </header>
@@ -134,21 +133,21 @@
       <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
       <div id="frameUploader" style="border:1px dashed #d1d5db;border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#fafbfc">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          <span style="font-size:13px;color:#374151">📤 家庭共享上传：把照片传到 NAS 并进照片库</span>
+          <span style="font-size:13px;color:#374151">📤 上传照片到照片库</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <input id="frameUser" list="frameUserList" placeholder="你的名字（如 naoki）"
-                 style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;width:150px">
-          <datalist id="frameUserList"></datalist>
+          <select id="frameFolder" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;max-width:220px"></select>
+          <button onclick="newPhotoFolder()" id="frameNewFolderBtn" style="background:#f3f4f6;color:#374151">＋ 新建文件夹</button>
           <button onclick="$('frameFiles').click()" id="framePickBtn">选照片</button>
           <input type="file" id="frameFiles" accept="image/*" multiple hidden>
           <button onclick="$('frameDir').click()" id="frameDirBtn">选文件夹</button>
           <input type="file" id="frameDir" webkitdirectory directory hidden>
           <span id="frameUpMsg" style="font-size:12px;color:#6b7280"></span>
         </div>
-        <div style="font-size:11px;color:#9ca3af;margin-top:6px">上传到 NAS 的 Frame_<名字> 文件夹并自动进照片库（同名照片自动跳过）</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:6px">上传到所选文件夹（即分类；同名照片自动跳过）</div>
       </div>
       <div id="scoresTabs" style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:8px;padding-bottom:4px"></div>
+      <div id="folderAdmin" style="display:none;gap:8px;align-items:center;margin-bottom:8px;font-size:13px;color:#6b7280"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
         <span style="color:#6b7280">排序：</span>
         <select id="scoresSort" style="padding:6px">
@@ -174,18 +173,6 @@
     <section>
       <h2>内容库</h2>
       <div class="grid" id="images"><div class="empty">加载中…</div></div>
-    </section>
-  </div>
-
-  <!-- ═══════════ 同步 ═══════════ -->
-  <div class="panel" id="panel-sync" style="display:none">
-    <section>
-      <h2>NAS 照片同步</h2>
-      <div style="margin-bottom:10px">
-        <button onclick="startSync()" id="syncStartBtn">▶ 立即同步 NAS</button>
-        <span style="font-size:12px;color:#9ca3af;margin-left:8px">增量拉取 NAS 新增/变化的照片到本机照片库；与定时任务共用同一把锁，不会并发跑</span>
-      </div>
-      <div id="syncbox"><div class="empty">加载中…</div></div>
     </section>
   </div>
 
@@ -606,29 +593,70 @@ $('scores') && $('scores').addEventListener('scroll', () => {
   }
 });
 
-// ---------- 家庭共享上传（Frame_* 文件夹 → NAS + 照片库） ----------
-function _frameUserListKey() { return 'frameUsers'; }
-function _loadFrameUsers() {
-  try {
-    const names = JSON.parse(localStorage.getItem(_frameUserListKey()) || '[]');
-    $('frameUserList').innerHTML = names.map(n => `<option value="${n}">`).join('');
-  } catch (_) {}
-}
-function _rememberFrameUser(name) {
-  try {
-    const names = JSON.parse(localStorage.getItem(_frameUserListKey()) || '[]');
-    if (!names.includes(name)) { names.push(name); localStorage.setItem(_frameUserListKey(), JSON.stringify(names)); }
-  } catch (_) {}
-  _loadFrameUsers();
-}
-_loadFrameUsers();
+// ---------- 上传照片到照片库文件夹（分类 = 文件夹） ----------
+let photoFolders = [];   // [{name, count}] 磁盘文件夹列表（上传下拉 + 文件夹管理）
 
-async function _uploadFrames(fileList, useRelPath) {
-  const name = ($('frameUser').value || '').trim();
-  if (!name) { toast('先填你的名字'); $('frameUser').focus(); return; }
+async function refreshFolders(keep) {
+  try {
+    const { folders } = await api('/analysis/folders');
+    photoFolders = folders || [];
+    const sel = $('frameFolder');
+    const prev = keep ? sel.value : (sel.value || prevFolderSelection);
+    sel.innerHTML = photoFolders.map(f =>
+      `<option value="${escHtml(f.name)}">${escHtml(f.name)}（${f.count} 张）</option>`).join('')
+      || '<option value="">（还没有文件夹，先新建一个）</option>';
+    if (prev && photoFolders.some(f => f.name === prev)) sel.value = prev;
+    else prevFolderSelection = '';
+  } catch (_) {}
+}
+let prevFolderSelection = '';
+
+async function newPhotoFolder() {
+  const name = prompt('新文件夹名（即照片分类，中文/字母/数字/下划线/横线）：');
+  if (!name) return;
+  try {
+    await api('/analysis/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) });
+    toast('已新建文件夹: ' + name.trim());
+    prevFolderSelection = name.trim();
+    await refreshFolders(false);
+    $('frameFolder').value = name.trim();
+    loadScores(); loadSettings();
+  } catch (e) { toast('新建失败: ' + e.message); }
+}
+
+async function renamePhotoFolder() {
+  const old = currentScoreCat;
+  if (!old) return;
+  const name = prompt(`重命名文件夹「${old}」（分类与时段绑定随迁）：`, old);
+  if (!name || name === old) return;
+  try {
+    const r = await api('/analysis/folders/' + encodeURIComponent(old), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new_name: name.trim() }) });
+    toast(`已重命名 → ${r.new}（迁移 ${r.moved_records} 条记录${r.rebound_segments ? '，联动 ' + r.rebound_segments + ' 个时段' : ''}）`);
+    currentScoreCat = name.trim();
+    prevFolderSelection = name.trim();
+    await refreshFolders(false);
+    loadScores(); loadManualPick(); loadSettings();
+  } catch (e) { toast('重命名失败: ' + e.message); }
+}
+
+async function delPhotoFolder() {
+  const name = currentScoreCat;
+  if (!name) return;
+  if (!confirm(`删除空文件夹「${name}」？仅能删除不含照片的文件夹。`)) return;
+  try {
+    await api('/analysis/folders/' + encodeURIComponent(name), { method: 'DELETE' });
+    toast('已删除文件夹: ' + name);
+    currentScoreCat = '';
+    await refreshFolders(false);
+    loadScores(); loadManualPick(); loadSettings();
+  } catch (e) { toast('删除失败: ' + e.message); }
+}
+
+async function _uploadPhotos(fileList, useRelPath) {
+  const folder = ($('frameFolder').value || '').trim();
+  if (!folder) { toast('先选择或新建一个文件夹'); return; }
   const files = [...fileList].filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|gif|heic|heif|webp|bmp|tiff?)$/i.test(f.name));
   if (!files.length) { toast('没有可上传的照片'); return; }
-  const folder = 'Frame_' + name;
   const msg = $('frameUpMsg');
   msg.textContent = `上传中 ${files.length} 张到 ${folder} …`;
   const fd = new FormData();
@@ -642,20 +670,21 @@ async function _uploadFrames(fileList, useRelPath) {
   fd.append('paths', rels.join('|'));
   try {
     const r = await api('/analysis/upload', { method: 'POST', body: fd });
-    _rememberFrameUser(name);
+    prevFolderSelection = folder;
     const parts = [`✅ 新传 ${r.saved} 张`];
     if (r.skipped) parts.push(`跳过同名 ${r.skipped} 张`);
     if (r.errors?.length) parts.push(`失败 ${r.errors.length}`);
-    msg.textContent = parts.join('，') + ` → ${folder}（自动同步到 NAS）`;
+    msg.textContent = parts.join('，') + ` → ${folder}`;
     toast(parts.join('，'));
-    loadScores();   // 新照片进照片库 tab
+    loadScores(); refreshFolders(true);   // 新照片进照片库 tab
   } catch (e) {
     msg.textContent = '上传失败: ' + e.message;
     toast('上传失败: ' + e.message);
   }
 }
-$('frameFiles') && $('frameFiles').addEventListener('change', e => { _uploadFrames(e.target.files, false); e.target.value = ''; });
-$('frameDir') && $('frameDir').addEventListener('change', e => { _uploadFrames(e.target.files, true); e.target.value = ''; });
+$('frameFiles') && $('frameFiles').addEventListener('change', e => { _uploadPhotos(e.target.files, false); e.target.value = ''; });
+$('frameDir') && $('frameDir').addEventListener('change', e => { _uploadPhotos(e.target.files, true); e.target.value = ''; });
+$('frameFolder') && $('frameFolder').addEventListener('change', e => { prevFolderSelection = e.target.value; });
 
 function renderScoreTabs(categories) {
   const bar = $('scoresTabs');
@@ -671,12 +700,26 @@ function renderScoreTabs(categories) {
     .concat(categories.slice());
   bar.innerHTML = all.map(c => `
     <button class="score-tab" data-cat="${encodeURIComponent(c.name)}" style="${base}${cat(c)}">
-      ${c.name} <span style="font-size:11px;${c.name === currentScoreCat ? 'color:#cbd5e1' : 'color:#9ca3af'}">${c.count}</span></button>`).join('');
-  bar.querySelectorAll('.score-tab').forEach(b => b.addEventListener('click', () => {
+      ${c.name} <span style="font-size:11px;${c.name === currentScoreCat ? 'color:#cbd5e1' : 'color:#9ca3af'}">${c.count}</span></button>`).join('')
+    + `<button class="score-tab" id="tabNewFolder" style="${base}background:#f8fafc;color:#2563eb" title="新建照片库文件夹（新分类）">＋ 新建</button>`;
+  bar.querySelectorAll('.score-tab[data-cat]').forEach(b => b.addEventListener('click', () => {
     currentScoreCat = decodeURIComponent(b.dataset.cat);
     if (currentScoreCat === '全部') currentScoreCat = '';
     loadScores();
   }));
+  $('tabNewFolder') && $('tabNewFolder').addEventListener('click', newPhotoFolder);
+  // 文件夹管理条：选中具体磁盘文件夹（非「全部」/「未分类」）时显示重命名/删除
+  const admin = $('folderAdmin');
+  const folderNames = photoFolders.map(f => f.name);
+  if (currentScoreCat && folderNames.includes(currentScoreCat)) {
+    admin.style.display = 'flex';
+    admin.innerHTML = `📁 「${escHtml(currentScoreCat)}」：
+      <button onclick="renamePhotoFolder()" style="background:#f3f4f6;color:#374151">✏️ 重命名</button>
+      <button onclick="delPhotoFolder()" style="background:#f3f4f6;color:#dc2626">🗑 删除（仅空文件夹）</button>`;
+  } else {
+    admin.style.display = 'none';
+    admin.innerHTML = '';
+  }
 }
 async function loadManualPick() {
   try {
@@ -699,108 +742,26 @@ async function unpickDaily() {
   try { await api('/images/daily/select', { method: 'DELETE' }); toast('已恢复自动选片'); loadManualPick(); loadDaily(); loadDisplay(); }
   catch (e) { toast('失败: ' + e.message); }
 }
-async function startSync() {
-  const btn = $('syncStartBtn');
-  btn.disabled = true;
-  try {
-    await api('/sync/start', { method: 'POST' });
-    toast('已开始 NAS 同步（后台运行）');
-    loadSync();
-  } catch (e) { toast('无法启动同步: ' + e.message); }
-  btn.disabled = false;
-}
-async function loadSync() {
-  const box = $('syncbox');
-  const btn = $('syncStartBtn');
-  try {
-    const s = await api('/sync/status');
-    btn.disabled = (s.status === 'running' || s.status === 'stale');
-    const fmt = b => b >= 1024**3 ? (b/1024**3).toFixed(2)+' GB' : (b/1024**2).toFixed(0)+' MB';
-    const fmtRate = k => k >= 1024 ? (k/1024).toFixed(2)+' MB/s' : k.toFixed(1)+' KB/s';
-    const avgKb = s.avg_speed_kb !== undefined && s.avg_speed_kb !== '' ? Number(s.avg_speed_kb) : null;
-    const pct = s.percent ?? 0;
-    const states = { running:'同步中', done:'已完成', error:'失败', stale:'进程失联', idle:'未运行' };
-    const color = { running:'#2563eb', done:'#16a34a', error:'#dc2626', stale:'#d97706', idle:'#9ca3af' };
-    box.innerHTML = `
-      <div style="font-size:13px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-          <b>${states[s.status] || s.status}</b>
-          <span>${s.total_bytes ? fmt(s.transferred_bytes||0)+' / '+fmt(s.total_bytes) : ''}</span>
-        </div>
-        <div style="height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden">
-          <div style="height:100%;width:${Math.min(100,pct)}%;background:${color[s.status]||'#2563eb'};transition:width .8s"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;margin-top:6px;color:#6b7280">
-          <span>${pct.toFixed?pct.toFixed(1):pct}%${s.total_files ? ' · '+fmt(s.transferred_files||0)+'/'+fmt(s.total_files)+' 文件' : ''}</span>
-          <span>${s.bwlimit_kb ? '限速 '+s.bwlimit_kb+'KB/s' : ''}${avgKb !== null ? ' · 均速 '+fmtRate(avgKb) : ''}</span>
-        </div>
-        <div style="color:#6b7280;margin-top:6px" title="均速 = 窗口内下载量 ÷ 时间（最近 10 次采样，约 50 秒）">${s.message||''}${avgKb !== null ? '（近 50s 均速 '+fmtRate(avgKb)+'）' : ''}</div>
-      </div>`;
-  } catch (_) { box.innerHTML = '<div class="empty">—</div>'; }
-}
-async function syncToNas(id) {
-  try {
-    await api('/images/' + id + '/sync-nas', { method: 'POST' });
-    toast('已开始同步到 NAS');
-  } catch (e) { toast('同步失败: ' + e.message); }
-  loadImages();
-  // 上传在后台执行：每 3 秒刷新一次，直到离开 uploading 状态
-  (function poll() {
-    setTimeout(async () => {
-      const { images } = await api('/images');
-      const it = images.find(x => x.id === id);
-      if (it && it.nas_status === 'uploading') poll();
-      else loadImages();
-    }, 3000);
-  })();
-}
-async function deleteLocalCopy(id) {
-  if (!confirm('NAS 副本已保存。删除后：内容库不再保留这张图（下载/预览/推送到显示不可用），照片仍保留在 NAS 照片库中。确定删除本地副本？')) return;
-  try {
-    await api('/images/' + id + '/delete-local', { method: 'POST' });
-    toast('已删除本地副本（NAS 保留）');
-    loadImages(); loadDaily(); loadDisplay();
-  } catch (e) { toast('删除失败: ' + e.message); }
-}
 async function loadImages() {
   const { images } = await api('/images');
   let pushedId = '';
   try { pushedId = (await api('/images/content/pushed')).pushed?.id || ''; } catch (_) {}
   const box = $('images');
-  // 已推送到 NAS 的图不再出现在内容库（本地镜像在照片库 photos/FramedPhoto 中展示）
-  const visible = images.filter(m => (m.nas_status || '') !== 'saved');
-  if (!visible.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
-  box.innerHTML = visible.map(m => {
-    const nas = m.nas_status || '';
-    let nasHtml = '';
-    if (nas === 'uploading') nasHtml = '<div class="row" style="color:#2563eb;font-size:12px;margin-top:4px">⏳ 同步到 NAS 中…</div>';
-    else if (nas === 'saved') nasHtml = '<div class="row" style="color:#16a34a;font-size:12px;margin-top:4px">✅ NAS 已保存</div>';
-    else if (nas === 'failed') nasHtml = '<div class="row" style="color:#dc2626;font-size:12px;margin-top:4px" title="' + escHtml(m.nas_error || '') + '">⚠️ NAS 同步失败</div>';
-    let actionHtml = '';
-    if (nas === 'saved') {
-      actionHtml = `<button onclick="deleteLocalCopy('${m.id}')" style="background:#f3f4f6;color:#dc2626">删除本地副本</button>`;
-    } else if (nas === 'uploading') {
-      actionHtml = `<button disabled>同步中…</button>`;
-    } else {
-      actionHtml = `<button onclick="syncToNas('${m.id}')">⬆ 同步到 NAS</button>`;
-    }
-    return `
+  if (!images.length) { box.innerHTML = '<div class="empty">还没有图片，先上传一张吧</div>'; return; }
+  box.innerHTML = images.map(m => `
     <div class="card">
       <img src="/api/images/${m.id}/thumb?t=${Math.floor(m.created_at)}" loading="lazy">
       <div class="meta">
         <b title="${m.filename || ''}">${m.filename || m.id}</b>
         <div class="row"><span>${m.id === pushedId ? '📌 今日推送中' : timeAgo(m.created_at)}</span></div>
-        ${nasHtml}
         <div class="row" style="margin-top:6px">
           <a href="/api/images/${m.id}/download" class="dl-btn" title="下载原图（全彩）">⬇ 下载原图</a>
           ${m.id === pushedId
             ? `<button onclick="unpushContent()" style="background:#f3f4f6;color:#dc2626">取消推送</button>`
             : `<button onclick="pushContent('${m.id}')">推送到显示</button>`}
-          ${actionHtml}
-          <button class="danger" onclick="delImage('${m.id}')" title="直接从内容库删除（NAS 副本不受影响）">删除</button></div>
+          <button class="danger" onclick="delImage('${m.id}')">删除</button></div>
       </div>
-    </div>`;
-  }).join('');
+    </div>`).join('');
 }
 async function pushContent(id) {
   if (!confirm('推送到显示？照片时段将显示这张，当日有效，次日恢复自动')) return;
@@ -1490,12 +1451,11 @@ async function saveWifiConfig() {
 }
 
 $('scoresSort') && $('scoresSort').addEventListener('change', () => loadScores());
-loadHealth(); loadDisplay(); loadSync(); loadDaily(); loadScores(); loadManualPick(); loadImages(); loadDevices(); loadFw();
+loadHealth(); refreshFolders().then(() => loadScores()); loadDisplay(); loadDaily(); loadManualPick(); loadImages(); loadDevices(); loadFw();
 loadSettings();
 setInterval(loadDevices, 15000);
 setInterval(loadDisplay, 60000);
 setInterval(loadDaily, 600000);
-setInterval(loadSync, 5000);
 setInterval(() => { tlNowLine(); $('tlCurrent').textContent = TL_TYPES[tlTypeAt(new Date())].label; }, 60000);
 </script>
 </body>

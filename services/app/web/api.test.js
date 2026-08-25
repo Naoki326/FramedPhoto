@@ -40,7 +40,7 @@ test('非 2xx：JSON body 无 detail 时同样回退状态文本', async () => {
   const api = createApi(stubFetch(
     Response.json({ other: 1 }, { status: 502, statusText: 'Bad Gateway' }),
   ));
-  await assert.rejects(api('/sync/status'), { message: 'Bad Gateway' });
+  await assert.rejects(api('/devices'), { message: 'Bad Gateway' });
 });
 
 test('非 2xx：状态文本为空时回退 HTTP <status>', async () => {

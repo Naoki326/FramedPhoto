@@ -1387,54 +1387,48 @@ def test_content_manifest_per_slot_bound_category(monkeypatch):
     assert data["images"][0]["filename"] == "pick.png"
 
 
-# ---------- 照片库上传入口（家庭共享：按文件夹上传 → 自动分析 → 同步回 NAS） ----------
+# ---------- 照片库上传入口（按文件夹上传 → 自动分析入库） ----------
 
 def _patch_photo_lib(monkeypatch, tmp_path):
-    """隔离照片库目录 + 拦截 NAS 推送（不上真实 NAS）。"""
+    """隔离照片库目录（不碰真实 services/photos）。"""
     from app.routers import analysis as analysis_mod
-    from app import nas_sync
     lib = tmp_path / "photos"
     lib.mkdir(exist_ok=True)
     monkeypatch.setattr(analysis_mod.settings, "photo_lib_dir", str(lib))
-    pushed = []
-    monkeypatch.setattr(nas_sync, "push_frame_dir",
-                        lambda folder: pushed.append(folder) or {"ok": True, "folder": folder})
-    return lib, pushed
+    return lib
 
 
-def test_photo_upload_to_frame_folder(monkeypatch, tmp_path):
-    """上传照片到 Frame_ 文件夹：落盘 + 启发式分析入库 + 分类正确 + 触发 NAS 推送。"""
-    lib, pushed = _patch_photo_lib(monkeypatch, tmp_path)
-    r = client.post("/api/analysis/upload", data={"folder": "Frame_测试"},
+def test_photo_upload_to_folder(monkeypatch, tmp_path):
+    """上传照片到指定文件夹：落盘 + 启发式分析入库 + 分类正确（文件夹不存在自动创建）。"""
+    lib = _patch_photo_lib(monkeypatch, tmp_path)
+    r = client.post("/api/analysis/upload", data={"folder": "宝宝"},
                     files=[("files", ("a.png", _png_bytes(color=(10, 20, 30)), "image/png")),
                            ("files", ("b.png", _png_bytes(color=(40, 50, 60)), "image/png"))])
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["saved"] == 2, body
     # 文件落盘到照片库目标文件夹
-    assert (lib / "Frame_测试" / "a.png").is_file()
-    assert (lib / "Frame_测试" / "b.png").is_file()
+    assert (lib / "宝宝" / "a.png").is_file()
+    assert (lib / "宝宝" / "b.png").is_file()
     # 启发式分析入库（bg task 同步执行），分类 = 文件夹名
     from app import db
-    rec = db.get_photo_score(str(lib / "Frame_测试" / "a.png"))
+    rec = db.get_photo_score(str(lib / "宝宝" / "a.png"))
     assert rec is not None and rec.get("analyzed_at"), "上传后应自动启发式分析"
-    assert rec["category"] == "Frame_测试"
-    # NAS 推送被触发（推该文件夹目录）
-    assert "Frame_测试" in pushed
+    assert rec["category"] == "宝宝"
 
 
 def test_photo_upload_with_subfolder_relpath(monkeypatch, tmp_path):
     """文件夹上传（webkitRelativePath）：子目录结构保留，分类仍为第一层文件夹名。"""
-    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
+    lib = _patch_photo_lib(monkeypatch, tmp_path)
     r = client.post("/api/analysis/upload",
-                    data={"folder": "Frame_naoki", "paths": "旅行/IMG_01.jpg"},
+                    data={"folder": "旅行", "paths": "2024北海道/IMG_01.jpg"},
                     files=[("files", ("IMG_01.jpg", _png_bytes(), "image/jpeg"))])
     assert r.status_code == 200, r.text
     assert r.json()["saved"] == 1
-    assert (lib / "Frame_naoki" / "旅行" / "IMG_01.jpg").is_file()
+    assert (lib / "旅行" / "2024北海道" / "IMG_01.jpg").is_file()
     from app import db
-    rec = db.get_photo_score(str(lib / "Frame_naoki" / "旅行" / "IMG_01.jpg"))
-    assert rec is not None and rec["category"] == "Frame_naoki"
+    rec = db.get_photo_score(str(lib / "旅行" / "2024北海道" / "IMG_01.jpg"))
+    assert rec is not None and rec["category"] == "旅行"
 
 
 def test_photo_upload_rejects_bad_folder(monkeypatch, tmp_path):
@@ -1451,24 +1445,116 @@ def test_photo_upload_rejects_path_traversal_in_relpath(monkeypatch, tmp_path):
     _patch_photo_lib(monkeypatch, tmp_path)
     for bad_path in ("../evil.png", "/etc/evil.png", "a/../../b.png"):
         r = client.post("/api/analysis/upload",
-                        data={"folder": "Frame_x", "paths": bad_path},
+                        data={"folder": "宝宝", "paths": bad_path},
                         files=[("files", ("a.png", _png_bytes(), "image/png"))])
         assert r.status_code == 400, f"paths={bad_path!r} 应拒绝"
 
 
 def test_photo_upload_skip_existing_and_non_image(monkeypatch, tmp_path):
     """同名文件跳过（幂等）；非图片扩展名拒绝。"""
-    lib, _ = _patch_photo_lib(monkeypatch, tmp_path)
+    lib = _patch_photo_lib(monkeypatch, tmp_path)
     files = [("files", ("dup.png", _png_bytes(color=(1, 2, 3)), "image/png"))]
-    r1 = client.post("/api/analysis/upload", data={"folder": "Frame_x"}, files=files)
+    r1 = client.post("/api/analysis/upload", data={"folder": "宝宝"}, files=files)
     assert r1.status_code == 200 and r1.json()["saved"] == 1
-    r2 = client.post("/api/analysis/upload", data={"folder": "Frame_x"}, files=files)
+    r2 = client.post("/api/analysis/upload", data={"folder": "宝宝"}, files=files)
     assert r2.status_code == 200
     assert r2.json()["saved"] == 0 and r2.json()["skipped"] == 1
     # 非图片
-    r3 = client.post("/api/analysis/upload", data={"folder": "Frame_x"},
+    r3 = client.post("/api/analysis/upload", data={"folder": "宝宝"},
                      files=[("files", ("virus.exe", b"MZ...", "application/octet-stream"))])
     assert r3.status_code == 400
+
+
+# ---------- 照片库文件夹管理（ADR-0007：新建 / 重命名 / 删除） ----------
+
+def _patch_cat_settings(monkeypatch, tmp_path):
+    """隔离照片库目录（category 与 analysis 两处 settings 引用）。"""
+    from app import category as cat_mod
+    from app.routers import analysis as analysis_mod
+    lib = tmp_path / "photos"
+    lib.mkdir(exist_ok=True)
+    monkeypatch.setattr(analysis_mod.settings, "photo_lib_dir", str(lib))
+    monkeypatch.setattr(cat_mod.settings, "photo_lib_dir", str(lib))
+    return lib
+
+
+def test_folder_create_list_and_validation(monkeypatch, tmp_path):
+    """新建文件夹：合法名成功且出现在列表；非法名 / 重名 / 保留名「未分类」拒绝。"""
+    lib = _patch_cat_settings(monkeypatch, tmp_path)
+    r = client.post("/api/analysis/folders", json={"name": "宝宝成长"})
+    assert r.status_code == 200, r.text
+    assert (lib / "宝宝成长").is_dir()
+    r = client.get("/api/analysis/folders")
+    assert [f["name"] for f in r.json()["folders"]] == ["宝宝成长"]
+    # 重名 → 409；非法名 / 保留名 → 400
+    assert client.post("/api/analysis/folders", json={"name": "宝宝成长"}).status_code == 409
+    for bad in ("", "a/b", "../x", "未分类"):
+        r = client.post("/api/analysis/folders", json={"name": bad})
+        assert r.status_code == 400, f"name={bad!r} 应拒绝"
+
+
+def test_folder_rename_migrates_records_and_rebinds(monkeypatch, tmp_path):
+    """重命名：目录 mv + 评分记录 path/category 迁移 + 时段绑定联动。"""
+    lib = _patch_cat_settings(monkeypatch, tmp_path)
+    from app import db, runtime_config
+    CAT, NEW = "重命名迁移测试", "重命名迁移后"
+    runtime_config.save({"slot_segments": [
+        {"start": "00:00", "type": "photo", "category": CAT},
+        {"start": "12:00", "type": "weather"},
+    ]})
+    r = client.post("/api/analysis/upload", data={"folder": CAT},
+                    files=[("files", ("a.png", _png_bytes(), "image/png"))])
+    assert r.status_code == 200, r.text
+    old_path = str(lib / CAT / "a.png")
+    rec = db.get_photo_score(old_path)
+    assert rec and rec["category"] == CAT
+
+    r = client.patch(f"/api/analysis/folders/{CAT}", json={"new_name": NEW})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["moved_records"] == 1 and body["rebound_segments"] == 1
+    # 目录已改名，记录 path 前缀替换、评分文案保留
+    assert not (lib / CAT).exists() and (lib / NEW / "a.png").is_file()
+    moved = db.get_photo_score(str(lib / NEW / "a.png"))
+    assert moved and moved["category"] == NEW
+    assert moved["memory_score"] == rec["memory_score"]
+    assert db.get_photo_score(old_path) is None
+    # 时段绑定联动到新名
+    segs = runtime_config.get("slot_segments")
+    assert segs[0]["category"] == NEW
+    # 重命名到已存在名字 → 409；不存在的源 → 404
+    assert client.patch(f"/api/analysis/folders/{NEW}", json={"new_name": NEW}).status_code == 409
+    assert client.patch("/api/analysis/folders/没有这个", json={"new_name": "x"}).status_code == 404
+
+
+def test_folder_delete_empty_only_and_clears_bindings(monkeypatch, tmp_path):
+    """删除：空文件夹成功并清理残留记录与时段绑定；非空 → 409。"""
+    lib = _patch_cat_settings(monkeypatch, tmp_path)
+    from app import db, runtime_config
+    CAT = "删除测试分类"
+    runtime_config.save({"slot_segments": [
+        {"start": "00:00", "type": "photo", "category": CAT},
+    ]})
+    (lib / CAT).mkdir()
+    (lib / "空的").mkdir()
+    # 残留评分记录（文件已不在但记录还在）应随删除一并清理
+    db.upsert_photo_score(str(lib / CAT / "gone.png"), filename="gone.png",
+                          category=CAT, analyzed_at=1.0)
+    r = client.delete("/api/analysis/folders/空的")
+    assert r.status_code == 200, r.text
+    assert not (lib / "空的").exists()
+    # 非空 → 409
+    (lib / CAT / "x.png").write_bytes(b"x")
+    r = client.delete(f"/api/analysis/folders/{CAT}")
+    assert r.status_code == 409
+    # 清空后可删：残留记录清理 + 时段绑定置空（回全库）
+    (lib / CAT / "x.png").unlink()
+    r = client.delete(f"/api/analysis/folders/{CAT}")
+    assert r.status_code == 200, r.text
+    assert r.json()["removed_records"] == 1
+    assert db.list_photo_scores(limit=10, category=CAT) == []
+    segs = runtime_config.get("slot_segments")
+    assert segs[0].get("category") is None
 
 
 def test_chroma_bias_put_and_status():

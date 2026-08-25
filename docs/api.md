@@ -64,6 +64,11 @@
 | PUT | `/api/calibration/chroma-bias` | 设置浓彩偏置 `{"value": 0..4}`（0=忠实混色，ADR-0004） |
 | DELETE | `/api/calibration` | 清除校准，恢复默认占位色 |
 | GET | `/api/analysis/scores?category=X&sort=memory\|shot_at` | 照片评分列表（回忆度/拍摄时间排序），可选按分类过滤；返回 `summary`（分类汇总，供管理台 tab 排序） |
+| POST | `/api/analysis/upload` | 上传照片到照片库文件夹（multipart `folder` + `files` + 可选 `paths`；目标文件夹即分类，不存在自动创建，同名跳过） |
+| GET | `/api/analysis/folders` | 照片库文件夹列表（磁盘事实：名称 + 实际照片数） |
+| POST | `/api/analysis/folders` | 新建空文件夹（即新分类；名字不可叫「未分类」） |
+| PATCH | `/api/analysis/folders/{name}` | 重命名文件夹：mv 目录 + 迁移评分记录（path 前缀与分类）+ 联动时段绑定与手动精选（ADR-0007） |
+| DELETE | `/api/analysis/folders/{name}` | 删除空文件夹（连带清理该分类残留评分记录与时段绑定）；非空 409 |
 
 ### 天气城市设置
 
