@@ -16,11 +16,34 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).resolve().parent / "runtime_config.json"
+# 配置路径。以下三重保障确保测试绝不写真实配置（曾真实发生：#25 期间
+# 测试把 services/app/runtime_config.json 的 slot_segments 覆盖成单段 photo，
+# 8/25 14:10——conftest 的 fixture 只在 pytest 标准收集时生效，绕过它的
+# 运行方式（IDE 测试器、直接 python 脚本调 TestClient 等）会漏）:
+#   1. conftest 设置的 FRAMEDPHOTO_TEST_CONFIG → 显式重定向（最优先）。
+#   2. 否则若本模块在 pytest 进程内被 import（pytest 已加载、或正在收集/运行
+#      test_*）→ 自动隔离到一次性临时文件（不依赖 conftest 是否被加载）。
+#   3. 正常生产/开发环境 → 真实文件，行为不变。
+def _default_config_path() -> Path:
+    real = Path(__file__).resolve().parent / "runtime_config.json"
+    explicit = os.environ.get("FRAMEDPHOTO_TEST_CONFIG")
+    if explicit:
+        return Path(explicit)
+    in_pytest = ("pytest" in sys.modules or "_pytest" in sys.modules
+                 or bool(os.environ.get("PYTEST_CURRENT_TEST")))
+    if in_pytest:
+        import tempfile
+        return Path(tempfile.mkdtemp(prefix="framedphoto-runtime-config-")) / "runtime_config.json"
+    return real
+
+
+CONFIG_PATH = _default_config_path()
 
 # 可配置项白名单（管理台可改）：键 → 声明类型（读取按此强转返回）。
 # list/dict 结构类型不强转，结构校验在各自消费点（如 slots.canonicalize）。

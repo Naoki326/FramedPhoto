@@ -535,16 +535,19 @@ async function loadScores() {
 
 function renderScoreTabs(categories) {
   const bar = $('scoresTabs');
+  // 未选中：白底 + 深色文字（不能继承全局 button 的白字，否则浅灰底上白字不可见）；
+  // 选中：深底白字；空分类：淡显虚线。
+  const base = 'padding:6px 14px;border-radius:999px;border:1px solid #d1d5db;font-size:12px;white-space:nowrap;cursor:pointer;';
   const cat = c => {
-    if (c.name === currentScoreCat) return 'background:#111;color:#fff;border-color:#111';
-    if (c.count === 0) return 'opacity:.45;border-style:dashed';   // 空分类淡显
-    return '';
+    if (c.name === currentScoreCat) return 'background:#111;color:#fff;border-color:#111;font-weight:600';
+    if (c.count === 0) return 'background:#f8fafc;color:#9ca3af;opacity:.45;border-style:dashed';   // 空分类淡显
+    return 'background:#f8fafc;color:#374151';
   };
   const all = [{ name: '全部', count: categories.reduce((n, c) => n + (c.count || 0), 0) }]
     .concat(categories.slice());
   bar.innerHTML = all.map(c => `
-    <button class="score-tab" data-cat="${encodeURIComponent(c.name)}" style="padding:6px 12px;border-radius:999px;border:1px solid #d1d5db;background:#f8fafc;font-size:12px;white-space:nowrap;cursor:pointer;${cat(c)}">
-      ${c.name} <span style="font-size:11px;color:#9ca3af">${c.count}</span></button>`).join('');
+    <button class="score-tab" data-cat="${encodeURIComponent(c.name)}" style="${base}${cat(c)}">
+      ${c.name} <span style="font-size:11px;${c.name === currentScoreCat ? 'color:#cbd5e1' : 'color:#9ca3af'}">${c.count}</span></button>`).join('');
   bar.querySelectorAll('.score-tab').forEach(b => b.addEventListener('click', () => {
     currentScoreCat = decodeURIComponent(b.dataset.cat);
     if (currentScoreCat === '全部') currentScoreCat = '';
