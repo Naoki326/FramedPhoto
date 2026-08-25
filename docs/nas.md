@@ -80,6 +80,14 @@ mkdir -p /volume1/photo/Frame_naoki    # 每个家庭成员一个
 4. 照片分类 = 文件夹名（`Frame_naoki`），管理台照片库自动出现对应 tab，
    时段编排可给照片时段绑定该分类（不出圈选片）
 
+**注意：相册（Album）≠ 文件夹（Folder），不要用相册来组织 Frame 分类**：
+
+Synology Photos 的相册是虚拟的（官方规格：一张照片可加入多个相册而不产生副本），
+照片加入相册后文件本体仍在原位置，rsync 同步的是文件系统目录——相册对同步
+不可见。Synology Photos 本身也不能新建文件夹（只能浏览/上传），建
+`Frame_<用户名>` 文件夹须用 **File Station**（DSM 网页 → File Station →
+photo → 新建文件夹，一次性）；日常传照片才用 Synology Photos。
+
 **手机怎么把照片放进去（Synology Photos 实测/官方规格，DSM 7.2+）**：
 
 - **手机 App 手动上传（推荐）**：选中照片 → 上传 → 目的地选「共享空间」→
