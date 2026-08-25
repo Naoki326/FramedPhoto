@@ -25,12 +25,15 @@ def main() -> int:
     ap.add_argument("-o", "--output", help="输出 .fps6 文件路径")
     ap.add_argument("--no-dither", action="store_true", help="关闭抖动")
     ap.add_argument("--profile", default="v2", choices=["v1", "v2"],
-                    help="调色板：v1=历史 RGB 距离；v2=OKLab 感知距离（默认）")
+                    help="调色板：v1=历史理想色；v2=校准色空间（默认，墨水对混色）")
+    ap.add_argument("--chroma-bias", type=float, default=None,
+                    help="浓彩偏置 0~4（默认读服务端 runtime_config；0=忠实混色，越大越浓彩）")
     ap.add_argument("--preview", help="同时输出 PNG 预览到此路径")
     args = ap.parse_args()
 
     raw = Path(args.input).read_bytes()
-    p = prepare_image(raw, dither=not args.no_dither, profile=args.profile)
+    p = prepare_image(raw, dither=not args.no_dither, profile=args.profile,
+                      chroma_bias=args.chroma_bias)
 
     out = Path(args.output or f"{Path(args.input).stem}.fps6")
     out.write_bytes(p.data)
