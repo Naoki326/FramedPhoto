@@ -193,8 +193,9 @@ test('页面载入：内容清单单次请求共享，两个面板照常渲染',
   include(el('displayMode')._history.innerHTML.join(''), '时段自动内容');
   include(el('daily')._history.innerHTML.join(''), '回忆度');
   // 健康检查（绝对路径）/ 分析分数 / 同步状态迁移后照常请求
+  // （分析分数带 sort/category 参数，前缀匹配）
   for (const url of ['/health', '/api/analysis/scores?limit=500', '/api/sync/status']) {
-    assert.ok(calls.some(c => c.url === url), '缺少请求 ' + url);
+    assert.ok(calls.some(c => url === '/health' || url === '/api/sync/status' ? c.url === url : c.url.startsWith(url)), '缺少请求 ' + url);
   }
   include(lastText(el, 'health'), 'EPD ok');
 });

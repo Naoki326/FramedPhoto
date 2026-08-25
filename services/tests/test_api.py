@@ -1469,3 +1469,38 @@ def test_photo_upload_skip_existing_and_non_image(monkeypatch, tmp_path):
     r3 = client.post("/api/analysis/upload", data={"folder": "Frame_x"},
                      files=[("files", ("virus.exe", b"MZ...", "application/octet-stream"))])
     assert r3.status_code == 400
+
+
+def test_chroma_bias_put_and_status():
+    """浓彩偏置：PUT 保存（越界 400），GET 校准状态回显当前值。"""
+    from app import runtime_config
+    try:
+        r = client.put("/api/calibration/chroma-bias", json={"value": 1.5})
+        assert r.status_code == 200, r.text
+        assert r.json()["chroma_bias"] == 1.5
+        assert runtime_config.get("chroma_bias") == 1.5
+
+        s = client.get("/api/calibration").json()
+        assert s["chroma_bias"] == 1.5
+
+        for bad in ({"value": -0.1}, {"value": 4.1}, {"value": "x"}, {}):
+            r = client.put("/api/calibration/chroma-bias", json=bad)
+            assert r.status_code == 400, (bad, r.text)
+    finally:
+        runtime_config.save({"chroma_bias": 0.0})
+
+
+def test_rainbow_quantized_preview():
+    """彩虹图量化预览：PNG（横放）、偏置参与渲染（0 与 4 字节不同）、越界 clamp 不 500。"""
+    r = client.get("/api/calibration/rainbow/preview?bias=0")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/png")
+    img = Image.open(io.BytesIO(r.content))
+    assert img.width > img.height          # 横放视角
+
+    r4 = client.get("/api/calibration/rainbow/preview?bias=4")
+    assert r4.status_code == 200, r4.text
+    assert r4.content != r.content, "偏置 0 与 4 的量化结果不应相同"
+
+    r_bad = client.get("/api/calibration/rainbow/preview?bias=99")
+    assert r_bad.status_code == 200        # clamp 到 4，不 500

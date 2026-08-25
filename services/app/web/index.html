@@ -322,12 +322,21 @@
             彩虹效果图走<b>正常转换链路</b>（量化+抖动），推送到设备看照片/内容在屏幕上的实际效果。
             觉得颜色不对就回步骤 2 调整；调整后再推一次对比。
           </p>
-          <div style="display:flex;gap:10px;align-items:center;margin:2px 0 10px">
+          <div style="display:flex;gap:10px;align-items:center;margin:2px 0 10px;flex-wrap:wrap">
             <span style="font-size:12px;color:#374151;white-space:nowrap">浓彩偏置 <b id="calBiasVal">0.0</b></span>
-            <input type="range" id="calBias" min="0" max="4" step="0.1" value="0" style="flex:1"
-                   oninput="$('calBiasVal').textContent=(+this.value).toFixed(1)"
+            <input type="range" id="calBias" min="0" max="4" step="0.1" value="0" style="flex:1;min-width:160px"
+                   oninput="$('calBiasVal').textContent=(+this.value).toFixed(1); $('calBiasSaved').textContent='拖动后松手自动保存'"
                    onchange="calBiasSave(this.value)">
+            <span id="calBiasSaved" style="font-size:11px;color:#9ca3af;white-space:nowrap">已保存 ✓</span>
             <span style="font-size:11px;color:#9ca3af;white-space:nowrap">0=忠实混色 → 4=浓彩（偏暗）</span>
+          </div>
+          <div style="margin:0 0 10px">
+            <button onclick="calBiasPreview()" id="calBiasPrevBtn" style="background:#f3f4f6;color:#374151">预览混色效果（按当前滑杆值）</button>
+            <span id="calBiasPrevState" style="font-size:11px;color:#9ca3af;margin-left:8px"></span>
+            <div id="calBiasPrevWrap" style="display:none;margin-top:8px">
+              <img id="calBiasPrevImg" style="max-width:100%;border:1px solid #e5e7eb;border-radius:8px" alt="彩虹图量化预览">
+              <div style="font-size:11px;color:#9ca3af;margin-top:4px">量化后效果（降采样预览）：混色比例、偏置强度与设备一致；抖动纹理粒度比真机略粗</div>
+            </div>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
             <button onclick="calRainbowPush()" id="calRainbowBtn" style="background:#7c3aed;color:#fff">生成彩虹效果图并推送设备</button>
@@ -1262,8 +1271,26 @@ async function calBiasSave(v) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: parseFloat(v) })
     });
-    toast('浓彩偏置已保存: ' + parseFloat(v).toFixed(1) + '，重新推送彩虹图或照片即可看到效果');
-  } catch (e) { toast('保存失败: ' + e.message); }
+    $('calBiasSaved').textContent = '已保存 ✓ ' + parseFloat(v).toFixed(1);
+    $('calBiasSaved').style.color = '#059669';
+    toast('浓彩偏置已保存: ' + parseFloat(v).toFixed(1) + '；旧缓存帧可用 tools/rerender_frames.py 批量刷新');
+  } catch (e) {
+    $('calBiasSaved').textContent = '保存失败: ' + e.message;
+    $('calBiasSaved').style.color = '#dc2626';
+  }
+}
+async function calBiasPreview() {
+  const btn = $('calBiasPrevBtn'); const state = $('calBiasPrevState');
+  const bias = parseFloat($('calBias').value);
+  btn.disabled = true; state.textContent = '渲染中…（约 2 秒）';
+  try {
+    const blob = await api('/calibration/rainbow/preview?bias=' + bias, { blob: true });
+    $('calBiasPrevImg').src = URL.createObjectURL(blob);
+    $('calBiasPrevWrap').style.display = '';
+    state.textContent = '偏置 ' + bias.toFixed(1) + ' 的量化效果 ↑';
+  } catch (e) {
+    state.textContent = '预览失败: ' + e.message;
+  } finally { btn.disabled = false; }
 }
 async function calUpload(markedOnly) {
   const f = $('calPhoto').files[0];

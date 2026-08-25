@@ -58,8 +58,21 @@ async def chart_preview():
 
 @router.get("/rainbow")
 async def rainbow_preview():
-    """彩虹效果图 PNG 预览（横放视角）。"""
+    """彩虹效果图 PNG 预览（横放视角，未量化的源图）。"""
     return Response(content=calibration.rainbow_png(), media_type="image/png")
+
+
+@router.get("/rainbow/preview")
+async def rainbow_quantized_preview(bias: float = 0.0):
+    """彩虹效果图量化后预览：走设备同款链路（v2 量化+device 色+浓彩偏置）。
+
+    bias 直接取查询参数（预览的是滑杆当前值，未保存也能看）；非法值抳
+    0..4。降采样 600x800 加速交互（见 rainbow_quantized_preview_png）。
+    """
+    from app.epd_image import MAX_CHROMA_BIAS
+    bias = max(0.0, min(MAX_CHROMA_BIAS, float(bias)))
+    return Response(content=calibration.rainbow_quantized_preview_png(bias),
+                    media_type="image/png")
 
 
 @router.post("/rainbow/push")

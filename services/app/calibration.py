@@ -286,3 +286,23 @@ def rainbow_fps6() -> bytes:
     """彩虹图经正常转换链路（v2 量化+抖动）输出 FPS6。"""
     from app.epd_image import prepare_image
     return prepare_image(rainbow_png(), profile="v2").data
+
+
+def rainbow_quantized_preview_png(chroma_bias: float = 0.0) -> bytes:
+    """彩虹图经完整量化链路（含浓彩偏置）的预览 PNG（横放视角）。
+
+    管理台校准页「预览混色效果」用：与设备所见同一条链路（v2 量化+抖动
+    +device 观感色+偏置），但降到 600x800 采样（全尺寸要 6s+，预览 ~1.5s；
+    混色比例与偏置效果不受分辨率影响，仅抖动纹理粒度不同）。
+    """
+    from app.epd_image import (
+        PreparedImage, _pack_fps6, _quantize_to_layout, get_profile,
+        preview_png_landscape,
+    )
+    prof = get_profile("v2")
+    canvas = build_rainbow_chart().resize((800, 600), Image.LANCZOS)
+    canvas = canvas.rotate(90, expand=True)          # 横放 -> 竖屏（生产同款视角）
+    w, h = canvas.size
+    raw = _quantize_to_layout(canvas, w, h, True, prof, chroma_bias)
+    prepared = PreparedImage(width=w, height=h, data=_pack_fps6(raw, w, h), profile=prof)
+    return preview_png_landscape(prepared, landscape=True)
