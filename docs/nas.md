@@ -74,11 +74,25 @@ mkdir -p /volume1/photo/Frame_naoki    # 每个家庭成员一个
 
 链路（无需额外配置）：
 
-1. 用户把照片放进 `Frame_<用户名>/`（手机传 NAS / File Station 拖入）
+1. 用户把照片放进 `Frame_<用户名>/`（手机 App / 网页版手动上传，见下）
 2. 现有每小时同步自动拉取 → 本机 `photos/Frame_<用户名>/`
 3. 同步后**自动启发式分析**（默认开，`NAS_AUTO_ANALYZE=0` 关闭）——新照片直接进照片库
 4. 照片分类 = 文件夹名（`Frame_naoki`），管理台照片库自动出现对应 tab，
    时段编排可给照片时段绑定该分类（不出圈选片）
+
+**手机怎么把照片放进去（Synology Photos 实测/官方规格，DSM 7.2+）**：
+
+- **手机 App 手动上传（推荐）**：选中照片 → 上传 → 目的地选「共享空间」→
+  浏览文件夹选 `Frame_<用户名>`（文件夹需预先建好；官方规格 "Supports
+  browsing photos in folder and timeline views" / "Albums must exist prior
+  to upload"）。
+- **网页版拖放（推荐）**：浏览器登录 DSM → Synology Photos → 切到共享空间
+  → 文件夹视图进入 `Frame_<用户名>` → 拖放照片（官方 "Easy File Upload"，
+  支持拖放上传照片/视频/整个文件夹）。
+- **不要用「照片备份」直连 Frame 文件夹**：备份目的地是空间级选择
+  （个人空间 / 共享空间，官方 "Supports customizing backup destinations"），
+  不能指定到共享空间里的子文件夹；备份到共享空间会落在根/日期文件夹，
+  污染照片库第一层分类。自动备份继续用个人空间即可，精选过的再手动传 Frame。
 
 要点：
 - 同步脚本只放行图片（过滤 `@eaDir`/缩略图/视频），用户文件夹里放照片即可
