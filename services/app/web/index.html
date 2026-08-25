@@ -81,7 +81,8 @@
   <div><h1>🖼 FramedPhoto 管理台</h1></div>
   <nav class="tabs" style="align-self:flex-end">
     <button class="tab active" data-tab="display">当前显示</button>
-    <button class="tab" data-tab="photos">照片</button>
+    <button class="tab" data-tab="photolib">照片库</button>
+    <button class="tab" data-tab="library">内容库</button>
     <button class="tab" data-tab="sync">同步</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
@@ -114,24 +115,11 @@
     </section>
   </div>
 
-  <!-- ═══════════ 照片 ═══════════ -->
-  <div class="panel" id="panel-photos" style="display:none">
-    <section>
-      <h2>上传图片（保存到内容库）</h2>
-      <div class="upload-row">
-        <input type="file" id="file" accept="image/*" multiple>
-        <button onclick="upload()" id="uploadBtn">上传并转换</button>
-      </div>
-    </section>
-
+  <!-- ═══════════ 照片库（今日精选 / 家庭共享上传 / 分类网格） ═══════════ -->
+  <div class="panel" id="panel-photolib" style="display:none">
     <section>
       <h2>今日精选（历史上的今天）</h2>
       <div id="daily"><div class="empty">加载中…</div></div>
-    </section>
-
-    <section>
-      <h2>内容库</h2>
-      <div class="grid" id="images"><div class="empty">加载中…</div></div>
     </section>
 
     <section>
@@ -163,6 +151,22 @@
       </div>
       <div class="grid" id="scores" style="max-height:480px;overflow-y:auto;padding-right:6px"><div class="empty">加载中…</div></div>
       <p style="font-size:12px;color:#9ca3af">分析命令：<code>python tools/analyze_photos.py /path/to/photos --no-vlm</code>（配置 VLM 后自动 AI 评分）</p>
+    </section>
+  </div>
+
+  <!-- ═══════════ 内容库（上传 / 图片网格） ═══════════ -->
+  <div class="panel" id="panel-library" style="display:none">
+    <section>
+      <h2>上传图片（保存到内容库）</h2>
+      <div class="upload-row">
+        <input type="file" id="file" accept="image/*" multiple>
+        <button onclick="upload()" id="uploadBtn">上传并转换</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>内容库</h2>
+      <div class="grid" id="images"><div class="empty">加载中…</div></div>
     </section>
   </div>
 

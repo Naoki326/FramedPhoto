@@ -132,3 +132,18 @@ def test_webui_photo_folder_upload_entry():
     assert 'id="frameUploader"' in html, "照片库页须有 Frame 上传入口容器"
     assert 'webkitdirectory' in html, "须支持按文件夹选择上传（webkitdirectory）"
     assert 'id="frameUser"' in html, "须有目标文件夹（用户）选择输入"
+
+
+def test_webui_photo_library_split_into_own_tab():
+    """照片库功能独立成 tab（#25 后续）：照片库/内容库分离，tab-panel 全对应。"""
+    html = INDEX.read_text("utf-8")
+    assert 'data-tab="photolib"' in html, "顶部导航须有照片库 tab"
+    assert 'id="panel-photolib"' in html, "照片库须有独立 panel"
+    assert 'data-tab="library"' in html, "顶部导航须有内容库 tab"
+    assert 'id="panel-library"' in html, "内容库须有独立 panel"
+    # 每个 data-tab 都有对应 panel（tab 切换通用逻辑不悬空）
+    tabs = set(re.findall(r'data-tab="(\w+)"', html))
+    panels = set(re.findall(r'id="panel-(\w+)"', html))
+    assert tabs <= panels, f"tab 缺 panel: {tabs - panels}"
+    # 照片库 panel 含其全部功能区块；内容库 panel 只含上传与网格
+    assert 'id="frameUploader"' in html and 'id="scores"' in html
