@@ -234,8 +234,10 @@ def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[int, int, int]:
 def build_rainbow_chart() -> Image.Image:
     """彩虹效果图（横放视角 1600x1200）：三条色相渐变带 + 底部六纯色块。
 
-    仅含理想 6 色与 sRGB 渐变，经正常量化后上屏。
+    渐变带为 sRGB 色相渐变；底部六纯色块取当前生效 v2 profile 的 device
+    观感色（校准后为真机色，量化时纯墨吸附保证出纯色参考块，ADR-0004）。
     """
+    from app.epd_image import get_profile
     import colorsys as _cs
     canvas = Image.new("RGB", (VIEW_W, VIEW_H), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
@@ -254,13 +256,14 @@ def build_rainbow_chart() -> Image.Image:
             color = _hsv_to_rgb(hue, sat, val)
             draw.line([(x, top), (x, top + hgt)], fill=color)
 
-    # 底部六纯色块（1..6，与校准图一致）
+    # 底部六纯色块（1..6，画 device 观感色：纯墨吸附后屏上即纯墨真色）
+    device_colors = get_profile("v2").device
     font_label = ImageFont.truetype(font_path, 64) if font_path else ImageFont.load_default(64)
     block_top = 760
     block_h = 170
     n = 6
     bw = (VIEW_W - 48) // n
-    for i, color in enumerate(SPECTRA6_PALETTE):
+    for i, color in enumerate(device_colors):
         x0 = 24 + i * bw
         draw.rectangle([x0, block_top, x0 + bw - 8, block_top + block_h], fill=color)
         label = str(i + 1)

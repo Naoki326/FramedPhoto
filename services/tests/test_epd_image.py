@@ -348,3 +348,34 @@ def test_intervention_plan_cache_consistent():
     # 色域内亮饱和色（白绿蓝混色内部的桶中心）：不干预
     inside = _intervention_plan(68, 132, 100, t)
     assert inside is None, "色域内亮色不应触发墨水对干预"
+
+
+def test_out_of_hull_dark_saturated_texture_stable():
+    """回归：色域外暗饱和色（如暗黄绿）不得抖出成团杂色斑块。
+
+    真机彩虹图反馈：校准色板下自由 6 墨 FS 在色域外暗饱和色上漂移失稳，
+    红墨以大块斑块出现（暗黄绿区成团）。墨水对混色后应为有序细抖动：
+    红墨份额接近最小二乘解（(58,128,0) → 绿82%+红18%），且不得成团
+    （3x3 邻域 ≥2 个红邻居的红像素占比 < 50%）。
+    """
+    from app.epd_image import _floyd_steinberg
+    rows = [[(58, 128, 0)] * 200 for _ in range(200)]  # 暗黄绿，色域外且不在纯墨吸附半径内
+    prof = _dark_profile()
+    idx = _floyd_steinberg(rows, prof)
+
+    flat = [v for r in idx for v in r]
+    red_frac = sum(1 for v in flat if v == 3) / len(flat)
+    assert 0.08 <= red_frac <= 0.28, f"红墨份额 {red_frac:.2f} 不在 [8%,28%] 合理区间"
+
+    # 成团率
+    hits = clust = 0
+    for y in range(1, 199):
+        for x in range(1, 199):
+            if idx[y][x] == 3:
+                hits += 1
+                n = sum(1 for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                        if (dx or dy) and idx[y + dy][x + dx] == 3)
+                if n >= 2:
+                    clust += 1
+    rate = clust / hits if hits else 0.0
+    assert rate < 0.5, f"红墨成团率 {rate:.2f} 过高（应为细抖动）"

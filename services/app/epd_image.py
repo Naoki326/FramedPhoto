@@ -292,6 +292,8 @@ def _nearest_index(rgb: tuple[int, int, int],
 
 CHROMA_SAT_GATE = 0.35   # 触发墨水对混色的饱和度门槛（(max-min)/max）
 MAX_CHROMA_BIAS = 4.0    # 浓彩偏置上限（管理台滑杆范围）
+PURE_SNAP2 = 900         # 源色纯墨吸附：源色距最近墨水 ≤30 个 RGB 单位时
+                         # 直接纯色输出（六纯色参考块/照片纯色区不参混色）
 
 
 def _saturation(r: float, g: float, b: float) -> float:
@@ -427,35 +429,46 @@ def _pick_ink(r0: float, g0: float, b0: float,
               chroma_bias: float = 0.0) -> tuple[int, float, float, float]:
     """量化取墨，返回 (墨水索引, 有效量化基准色)。
 
-    最近墨水为彩色时：直接返回（基准 = 调整后像素）。
-    命中黑/白且源像素饱和度超过 CHROMA_SAT_GATE 且在墨水凸包之外时
-    （色域外亮色，曾整块退化为白）：改用墨水对混合——
+    低饱和或色域内：最近墨水（基准 = 调整后像素）。
+    色域外高饱和色：墨水对混合（纯墨吸附除外）——
       - 墨水对方案由源色分桶缓存（_intervention_plan）；
       - 浓彩偏置把目标彩色份额 λ_c 放大为 λ_c·(1+bias·sat)；
       - 量化基准改为轴上虚拟源 v0 = a + λ_c_eff·(c-a)，误差只在轴上
-        传播——1D FS 占空比精确实现 λ_c_eff，且垂直分量不再发散。
+        传播——1D FS 占空比精确实现 λ_c_eff，纹理稳定有序（自由 6 墨 FS
+        在色域外饱和色上会漂移失稳，抖出成团杂色）。
     """
     idx = _nearest_index((r2, g2, b2), targets, "rgb")
-    if idx > 1:
-        return idx, r2, g2, b2
     sat = _saturation(r0, g0, b0)
     if sat <= CHROMA_SAT_GATE:
         return idx, r2, g2, b2
+    if not _outside_hull((r0, g0, b0), targets):
+        # 色域内的亮饱和色：6 墨涌现式混色（FS 误差反馈）平均保真更好，不干预
+        return idx, r2, g2, b2
+    # 纯墨吸附：源色距某墨水 ≤30 单位时直接纯色输出（校准参考块/照片纯色区）
+    si = _nearest_index((r0, g0, b0), targets, "rgb")
+    pr, pg, pb = targets[si]
+    if (pr - r0) ** 2 + (pg - g0) ** 2 + (pb - b0) ** 2 <= PURE_SNAP2:
+        return si, r2, g2, b2
+    # 色域外高饱和色：墨水对混色（自由 6 墨 FS 在这类颜色上漂移失稳，会抖出
+    # 成团的杂色斑块——实测彩虹图绿区红块/竖条纹；1D 沿轴占空比则是稳定
+    # 的有序细抖动）
     plan = _intervention_plan(r0, g0, b0, targets)
     if plan is None:
-        # 色域内的亮饱和色：6 墨涌现式混色（FS 误差反馈）平均保真更好，
-        # 不干预；只有色域外颜色（如纯青/品红，曾在最近墨水判定下整块
-        # 退化为白）才需要墨水对混色。
+        # 凸包边界附近的桶中心可能落回色域内——退回最近墨水
         return idx, r2, g2, b2
     a, c, mixed, lam_c, ddx, ddy, ddz, dd = plan
     if dd == 0.0:
         return a, r2, g2, b2
     lam_c_eff = min(1.0, lam_c * (1.0 + chroma_bias * sat)) if mixed else lam_c
     va = targets[a]
-    # 轴上虚拟源（含漂移）：占空比目标 λ_c_eff，误差沿轴反馈
-    vr = va[0] + lam_c_eff * ddx + (r2 - r0)
-    vg = va[1] + lam_c_eff * ddy + (g2 - g0)
-    vb = va[2] + lam_c_eff * ddz + (b2 - b0)
+    # 轴上虚拟源（含漂移）：占空比目标 λ_c_eff，误差沿轴反馈。
+    # 漂移取自已限幅的 r2（FS 残差有界，防全图纹理失稳）；虚拟基准本身
+    # 在色域内，再 clamp 一次保证残差有界。
+    def _cl(v: float) -> float:
+        return max(0.0, min(255.0, v))
+    vr = _cl(va[0] + lam_c_eff * ddx + (r2 - r0))
+    vg = _cl(va[1] + lam_c_eff * ddy + (g2 - g0))
+    vb = _cl(va[2] + lam_c_eff * ddz + (b2 - b0))
     proj = ((vr - va[0]) * ddx + (vg - va[1]) * ddy + (vb - va[2]) * ddz) / dd
     pick = c if proj > 0.5 else a
     return pick, vr, vg, vb
@@ -529,16 +542,17 @@ def _floyd_steinberg(pixels: list[list[tuple[int, int, int]]],
                                              err[y + 1][x + 1][2] + qb * 1 / 16)
         return out
 
-    # rgb：误差在 RGB 传播（不 clamp：截断会吞掉误差反馈，色域外颜色
-    # 的墨水对交替依赖误差累积）；高饱和色域外色走墨水对混色（_pick_ink
-    # 返回墨水索引 + 有效量化基准色，误差按基准色传播）
+    # rgb：误差在 RGB 传播；取墨与残差都基于限幅后的值（[0,255]），
+    # 不限幅会让误差残差无界累积、大面积平色区出现条纹/杂色失稳
+    # （实测淡带绿区混入红墨、亮带竖向条纹）；高饱和色域外色走墨水对
+    # 混色（_pick_ink 返回墨水索引 + 有效量化基准色，误差按基准色传播）
     for y in range(h):
         for x in range(w):
             r, g, b = pixels[y][x]
             er, eg, eb = err[y][x]
-            r2 = r + er
-            g2 = g + eg
-            b2 = b + eb
+            r2 = max(0, min(255, r + er))
+            g2 = max(0, min(255, g + eg))
+            b2 = max(0, min(255, b + eb))
             idx, qr_base, qg_base, qb_base = _pick_ink(r, g, b, r2, g2, b2,
                                                         targets, chroma_bias)
             out[y][x] = idx
