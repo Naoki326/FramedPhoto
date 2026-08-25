@@ -32,6 +32,8 @@ dist/
 
 # --- 运行数据 ---
 *.log
+*.log.[0-9]*
+*.log.[0-9]*.gz
 data/
 uploads/
 **/uploads/
