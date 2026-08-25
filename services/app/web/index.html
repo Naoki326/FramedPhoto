@@ -133,22 +133,24 @@
       <h2>照片库（设为今日精选）</h2>
       <div id="manualPick" style="font-size:13px;margin-bottom:10px;color:#374151"></div>
       <div id="frameUploader" style="border:1px dashed #d1d5db;border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#fafbfc">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
           <span style="font-size:13px;color:#374151">📤 上传到：<b id="uploadTarget" style="color:#111">根目录（未分类）</b></span>
-          <span style="font-size:11px;color:#9ca3af">点击上方分类 tab 切换目标，自动推回 NAS</span>
+          <span style="font-size:11px;color:#9ca3af">点击下方分类 tab 切换目标，自动推回 NAS</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <button onclick="newPhotoFolder()" id="frameNewFolderBtn" style="background:#f3f4f6;color:#374151">＋ 新建文件夹</button>
-          <button onclick="$('frameFiles').click()" id="framePickBtn">选照片</button>
-          <input type="file" id="frameFiles" accept="image/*" multiple hidden>
-          <button onclick="$('frameDir').click()" id="frameDirBtn">选文件夹</button>
-          <input type="file" id="frameDir" webkitdirectory directory hidden>
+          <button onclick="$('frameFiles').click()" id="framePickBtn">📷 选照片</button>
+          <button onclick="$('frameDir').click()" id="frameDirBtn">📂 选文件夹</button>
+          <span style="width:1px;height:22px;background:#e5e7eb;flex:none"></span>
+          <button onclick="newPhotoFolder()" id="frameNewFolderBtn" style="background:#f3f4f6;color:#374151">＋ 新建</button>
+          <button onclick="renamePhotoFolder()" id="renameFolderBtn" style="background:#f3f4f6;color:#374151" disabled>✏️ 重命名</button>
+          <button onclick="delPhotoFolder()" id="delFolderBtn" style="background:#f3f4f6;color:#dc2626" disabled>🗑 删除</button>
           <span id="frameUpMsg" style="font-size:12px;color:#6b7280"></span>
         </div>
-        <div style="font-size:11px;color:#9ca3af;margin-top:6px">上传到当前选中的分类 tab（未选中分类 = photo 根目录；同名照片自动跳过）</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:6px">上传到当前选中的分类 tab（未选中分类 = photo 根目录）；新建 / 重命名 / 删除作用于选中分类（NAS 同步执行，删除仅限空文件夹）；同名照片自动跳过</div>
+        <input type="file" id="frameFiles" accept="image/*" multiple hidden>
+        <input type="file" id="frameDir" webkitdirectory directory hidden>
       </div>
       <div id="scoresTabs" style="display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:8px;padding-bottom:4px"></div>
-      <div id="folderAdmin" style="display:none;gap:8px;align-items:center;margin-bottom:8px;font-size:13px;color:#6b7280"></div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
         <span style="color:#6b7280">排序：</span>
         <select id="scoresSort" style="padding:6px">
@@ -625,7 +627,7 @@ async function refreshFolders(keep) {
     photoFolders = folders || [];
   } catch (_) {}
   _updateUploadTarget();
-  _renderFolderAdmin();
+  _updateFolderActions();
 }
 
 async function newPhotoFolder() {
@@ -710,31 +712,26 @@ function renderScoreTabs(categories) {
     .concat(categories.slice());
   bar.innerHTML = all.map(c => `
     <button class="score-tab" data-cat="${encodeURIComponent(c.name)}" style="${base}${cat(c)}">
-      ${c.name} <span style="font-size:11px;${c.name === currentScoreCat ? 'color:#cbd5e1' : 'color:#9ca3af'}">${c.count}</span></button>`).join('')
-    + `<button class="score-tab" id="tabNewFolder" style="${base}background:#f8fafc;color:#2563eb" title="新建照片库文件夹（新分类）">＋ 新建</button>`;
+      ${c.name} <span style="font-size:11px;${c.name === currentScoreCat ? 'color:#cbd5e1' : 'color:#9ca3af'}">${c.count}</span></button>`).join('');
   bar.querySelectorAll('.score-tab[data-cat]').forEach(b => b.addEventListener('click', () => {
     currentScoreCat = decodeURIComponent(b.dataset.cat);
     if (currentScoreCat === '全部') currentScoreCat = '';
     loadScores();
     _updateUploadTarget();   // 上传目标跟随选中 tab
+    _updateFolderActions();  // 重命名/删除可用性跟随
   }));
-  $('tabNewFolder') && $('tabNewFolder').addEventListener('click', newPhotoFolder);
-  _renderFolderAdmin();
 }
 
-// 文件夹管理条：选中具体磁盘文件夹（非「全部」/「未分类」）时显示重命名/删除
-function _renderFolderAdmin() {
-  const admin = $('folderAdmin');
-  if (!admin) return;
-  const folderNames = photoFolders.map(f => f.name);
-  if (currentScoreCat && folderNames.includes(currentScoreCat)) {
-    admin.style.display = 'flex';
-    admin.innerHTML = `📁 「${escHtml(currentScoreCat)}」：
-      <button onclick="renamePhotoFolder()" style="background:#f3f4f6;color:#374151">✏️ 重命名</button>
-      <button onclick="delPhotoFolder()" style="background:#f3f4f6;color:#dc2626">🗑 删除（仅空文件夹）</button>`;
-  } else {
-    admin.style.display = 'none';
-    admin.innerHTML = '';
+// 工具栏「重命名 / 删除」可用性：仅当选中具体磁盘文件夹分类
+// （「全部」/「未分类」/未选中时置灰，新建始终可用）
+function _updateFolderActions() {
+  const cat = currentScoreCat;
+  const ok = !!(cat && cat !== '未分类' && photoFolders.some(f => f.name === cat));
+  for (const [id, label] of [['renameFolderBtn', '重命名'], ['delFolderBtn', '删除空文件夹']]) {
+    const btn = $(id);
+    if (!btn) continue;
+    btn.disabled = !ok;
+    btn.title = ok ? `${label}「${cat}」` : '先选中一个具体分类 tab';
   }
 }
 async function loadManualPick() {
