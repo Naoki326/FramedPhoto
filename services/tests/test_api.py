@@ -267,12 +267,24 @@ def test_wifi_config_reject_empty_ssid():
 
 # ---------- SmartConfig 配网 ----------
 
-def test_smartconfig_provision():
+def test_smartconfig_provision(monkeypatch):
+    """配网接口响应契约：started + ssid 回显。
+
+    真实发包走 esptouch 且要广播 30s（test_esptouch_sender 已单独覆盖
+    短时真实发包），这里把后台任务替换为空实现，避免每次跑测试白等 30s。
+    """
+    calls = []
+
+    def _noop_add_task(self, func, *args, **kwargs):
+        calls.append(func.__name__)
+
+    monkeypatch.setattr("starlette.background.BackgroundTasks.add_task", _noop_add_task)
     r = client.post("/api/devices/smartconfig", json={"ssid": "Home-5G", "password": "secret"})
     assert r.status_code == 200
     body = r.json()
     assert body["started"] is True
     assert body["ssid"] == "Home-5G"
+    assert "_send_smartconfig" in calls
 
 
 def test_smartconfig_reject_empty_ssid():
