@@ -8,8 +8,15 @@
   body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #f5f6f8; color: #222; }
   header { background: #1f2937; color: #fff; padding: 14px 24px 0; display: flex; justify-content: space-between; align-items: center; }
   header h1 { font-size: 18px; margin: 0 0 10px; }
-  .tabs { display: flex; gap: 4px; }
-  .tab { background: transparent; color: #cbd5e1; border: 0; padding: 9px 20px; font-size: 14px; cursor: pointer; border-radius: 8px 8px 0 0; }
+  .tabs { display: flex; gap: 4px; min-width: 0; }
+  .tab { background: transparent; color: #cbd5e1; border: 0; padding: 9px 20px; font-size: 14px; cursor: pointer; border-radius: 8px 8px 0 0; white-space: nowrap; }
+  /* 窄屏（手机上传照片 / 平板）：标题与 tab 条各占一行，tab 条放不下时自身横向滚动，不撑破右边界 */
+  @media (max-width: 768px) {
+    header { flex-wrap: wrap; padding: 12px 16px 0; row-gap: 6px; }
+    header h1 { margin: 0; font-size: 16px; }
+    .tabs { flex: 1 1 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tab { padding: 9px 14px; }
+  }
   .tab:hover { color: #fff; }
   .tab.active { background: #f5f6f8; color: #111; font-weight: 600; }
   main { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
@@ -325,8 +332,8 @@
           <div style="display:flex;gap:10px;align-items:center;margin:2px 0 10px;flex-wrap:wrap">
             <span style="font-size:12px;color:#374151;white-space:nowrap">浓彩偏置 <b id="calBiasVal">0.0</b></span>
             <input type="range" id="calBias" min="0" max="4" step="0.1" value="0" style="flex:1;min-width:160px"
-                   oninput="$('calBiasVal').textContent=(+this.value).toFixed(1); $('calBiasSaved').textContent='拖动后松手自动保存'"
-                   onchange="calBiasSave(this.value)">
+                   oninput="calBiasInput(this.value)">
+            <button onclick="calBiasSave($('calBias').value)" id="calBiasSaveBtn" style="padding:4px 14px;font-size:12px">保存</button>
             <span id="calBiasSaved" style="font-size:11px;color:#9ca3af;white-space:nowrap">已保存 ✓</span>
             <span style="font-size:11px;color:#9ca3af;white-space:nowrap">0=忠实混色 → 4=浓彩（偏暗）</span>
           </div>
@@ -1222,6 +1229,9 @@ function renderCalStatus(s) {
   if (typeof s.chroma_bias === 'number') {
     $('calBias').value = s.chroma_bias;
     $('calBiasVal').textContent = s.chroma_bias.toFixed(1);
+    calBiasSavedValue = s.chroma_bias;
+    $('calBiasSaved').textContent = '已保存 ✓';
+    $('calBiasSaved').style.color = '#9ca3af';
   }
   const box = $('calColors');
   box.innerHTML = '';
@@ -1264,20 +1274,29 @@ async function calRainbowPush() {
 }
 async function calShowChart() { window.open('/api/calibration/chart', '_blank'); }
 async function calShowRainbow() { window.open('/api/calibration/rainbow', '_blank'); }
+let calBiasSavedValue = 0;
+function calBiasInput(v) {
+  $('calBiasVal').textContent = (+v).toFixed(1);
+  const dirty = parseFloat(v) !== calBiasSavedValue;
+  $('calBiasSaved').textContent = dirty ? '未保存' : '已保存 ✓';
+  $('calBiasSaved').style.color = dirty ? '#d97706' : '#9ca3af';
+}
 async function calBiasSave(v) {
+  const btn = $('calBiasSaveBtn'); btn.disabled = true; btn.textContent = '保存中…';
   try {
     await api('/calibration/chroma-bias', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: parseFloat(v) })
     });
+    calBiasSavedValue = parseFloat(v);
     $('calBiasSaved').textContent = '已保存 ✓ ' + parseFloat(v).toFixed(1);
     $('calBiasSaved').style.color = '#059669';
     toast('浓彩偏置已保存: ' + parseFloat(v).toFixed(1) + '；旧缓存帧可用 tools/rerender_frames.py 批量刷新');
   } catch (e) {
     $('calBiasSaved').textContent = '保存失败: ' + e.message;
     $('calBiasSaved').style.color = '#dc2626';
-  }
+  } finally { btn.disabled = false; btn.textContent = '保存'; }
 }
 async function calBiasPreview() {
   const btn = $('calBiasPrevBtn'); const state = $('calBiasPrevState');
