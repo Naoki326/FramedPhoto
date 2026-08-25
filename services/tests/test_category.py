@@ -126,6 +126,39 @@ def test_scoped_pick_tier3_any_in_category(monkeypatch):
     assert chosen is not None and chosen["path"] == p
 
 
+def test_uncat_pick_tier3_unanalyzed_photos(monkeypatch):
+    """绑定未分类且池内照片全未分析（analyzed_at=None）→ ③级兜底仍选中（US4 三级降级）。
+
+    spec：绑定分类内只要有照片就一定有内容上屏（三级降级兜底）；
+    「未分类」与普通分类同规则，池内有照片（哪怕未分析）即不空屏。"""
+    p = _make_photo("scatter_unanalyzed.png")
+    db.upsert_photo_score(p, filename="scatter_unanalyzed.png",
+                          category=category.UNCATEGORIZED, content_hash="",
+                          analyzed_at=None)   # 未分析记录（analyzed_only 过滤会排除）
+    monkeypatch.setattr("app.daily.settings.daily_min_score", 101)
+    chosen, is_today = daily.select_daily_photo(category=category.UNCATEGORIZED)
+    assert chosen is not None, "未分类池内有照片（未分析）也必须上屏（③级兜底）"
+    assert chosen["path"] == p
+    assert is_today is False
+
+
+def test_category_summary_uncategorized_sorted_by_count(monkeypatch):
+    """分类汇总里「未分类」也按照片数降序参与排序（US12，不无条件排末尾）。"""
+    from app.config import settings as settings_mod
+    monkeypatch.setattr(settings_mod, "photo_lib_dir", str(PHOTO_LIB))
+    # 未分类 5 张 > 其它分类 1 张 → 未分类应排第一
+    for i in range(5):
+        p = _make_photo(f"scatter_s{i}.png")
+        _score(p, memory=60)
+    _score(_make_photo("宝宝/one.png"), memory=90)
+    summary = category.category_summary()
+    names = [c["name"] for c in summary]
+    assert names[0] == category.UNCATEGORIZED, f"未分类照片数最多应排首位，实际: {names}"
+    # 未分类计数正确（5 张）
+    uncat = next(c for c in summary if c["name"] == category.UNCATEGORIZED)
+    assert uncat["count"] == 5
+
+
 def test_scoped_pick_empty_category_no_content():
     """空分类（0 张）→ 无内容（None），绝不回退全库。"""
     _make_photo("婚礼视频/real.png")

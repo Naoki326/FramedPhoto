@@ -13,7 +13,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from app import db
+from app import category, db
 from app.config import settings
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -129,10 +129,16 @@ def _clone_photo_score(original: Path, mirror: Path, filename: str) -> None:
         fields = {key: score.get(key) for key in _SCORE_FIELDS if key in score}
         fields["filename"] = score.get("filename") or filename
         fields["source"] = "nas"
+        # US24：归档照片归 FramedPhoto 分类（普通分类）——按镜像路径第一段推导，
+        # 不沿用原上传图的「未分类」，也不等下次 analyze_photos 扫描才修正。
+        fields["category"] = category.derive_category(str(mirror))
+        fields["content_hash"] = category.compute_content_hash(str(mirror))
         db.upsert_photo_score(mirror_key, **fields)
     else:
         db.upsert_photo_score(
             mirror_key, filename=filename, source="nas", analyzed_at=None,
+            category=category.derive_category(str(mirror)),
+            content_hash=category.compute_content_hash(str(mirror)),
         )
 
 

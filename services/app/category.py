@@ -55,9 +55,11 @@ def list_categories() -> list[str]:
     return db.list_categories()
 
 
-def uncategorized_photos(sort: str = "memory") -> list[dict]:
-    """未分类照片：category 为「未分类」或 legacy 空串的记录（两种存储口径一致）。"""
-    rows = [r for r in db.list_photo_scores(limit=100000)
+def uncategorized_photos(sort: str = "memory", analyzed_only: bool = True) -> list[dict]:
+    """未分类照片：category 为「未分类」或 legacy 空串的记录（两种存储口径一致）。
+
+    analyzed_only=False 时含未分析记录（③级降级兜底用，US4）。"""
+    rows = [r for r in db.list_photo_scores(limit=100000, analyzed_only=analyzed_only)
             if not (r.get("category") or "") or r.get("category") == UNCATEGORIZED]
     if sort == "shot_at":
         rows = sorted(rows, key=lambda r: (r.get("shot_at") is None, r.get("shot_at") or 0),
@@ -68,22 +70,16 @@ def uncategorized_photos(sort: str = "memory") -> list[dict]:
 def category_summary() -> list[dict]:
     """分类汇总：名称 + 照片数，按照片数降序（tab 排序用，ADR 需求 12/13）。
 
-    含空分类（0 张）条目由磁盘目录列表补足（ADR 需求 14）；未分类单列。
+    含空分类（0 张）条目由磁盘目录列表补足（ADR 需求 14）；未分类参与降序
+    （US12，不无条件排末尾）。counts 来自 db.category_counts——legacy 空串已由
+    SQL 归并进未分类（COALESCE(NULLIF(category,''),'未分类')），无需二次统计。
     """
     counts = db.category_counts()
     # 补足空分类：照片库根下第一层文件夹（含无照片的空文件夹），未分类不在此列
     for name in _disk_first_level_dirs():
         counts.setdefault(name, 0)
-    # 未分类由 `category='未分类'` 或 legacy 空串单列
-    uncat = counts.pop(UNCATEGORIZED, 0)
-    legacy_uncat = sum(1 for r in db.list_photo_scores(limit=100000)
-                       if not (r.get("category") or ""))
-    uncat = max(uncat, legacy_uncat)
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    result = [{"name": name, "count": count} for name, count in ordered]
-    if uncat:
-        result.append({"name": UNCATEGORIZED, "count": uncat})
-    return result
+    return [{"name": name, "count": count} for name, count in ordered]
 
 
 def _disk_first_level_dirs() -> list[str]:

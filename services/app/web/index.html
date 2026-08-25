@@ -536,7 +536,7 @@ async function loadScores() {
 function renderScoreTabs(categories) {
   const bar = $('scoresTabs');
   const cat = c => {
-    if (c === currentScoreCat) return 'background:#111;color:#fff;border-color:#111';
+    if (c.name === currentScoreCat) return 'background:#111;color:#fff;border-color:#111';
     if (c.count === 0) return 'opacity:.45;border-style:dashed';   // 空分类淡显
     return '';
   };

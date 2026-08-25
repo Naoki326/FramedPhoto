@@ -138,6 +138,10 @@ def _select_uncat(m: int, d: int) -> tuple[dict | None, bool]:
         if chosen:
             return chosen, True
     scoped = [c for c in category.uncategorized_photos() if _path_exists(c)]
+    if not scoped:
+        # ③ 分类内任意——未分类确有照片但全为未分析/0 分时兜底（US4，与普通分类同级）
+        scoped = [c for c in category.uncategorized_photos(analyzed_only=False)
+                  if _path_exists(c)]
     fresh = [c for c in scoped if (c.get("used_at") or 0) < db.now() - 24 * 3600]
     pool = fresh or scoped
     if not pool:

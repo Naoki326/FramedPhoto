@@ -72,6 +72,10 @@ def test_push_content_image_success(monkeypatch, tmp_path):
     # 评分记录克隆到镜像路径（测试目录为绝对路径 → 主键也是绝对路径）
     score = db.get_photo_score(str(mirror))
     assert score is not None and score.get("filename") == "测试照片.png"
+    # US24：归档照片归入 FramedPhoto 分类（普通分类）——克隆评分时分类即修正，
+    # 不等下次 analyze_photos 扫描（content_hash 相同走复制并存语义）
+    assert score.get("category") == "FramedPhoto", \
+        f"镜像应归 FramedPhoto 分类，实际: {score.get('category')!r}"
 
 
 def test_push_remote_size_mismatch_raises(monkeypatch, tmp_path):
