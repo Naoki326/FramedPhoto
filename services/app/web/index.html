@@ -462,7 +462,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
 }));
 
 /* ---- 当前显示（一次性上传切换） ---- */
-const SOURCE_NAMES = { display: '手动临时图', weather: '天气卡片', free: '自由模块', manual: '手动上传', daily: '每日精选', photo: '每日照片', content_push: '内容库推送' };
+const SOURCE_NAMES = { display: '手动临时图', weather: '天气卡片', calendar: '日历卡片', free: '自由模块', manual: '手动上传', daily: '每日精选', photo: '每日照片', content_push: '内容库推送' };
 async function loadDisplay() {
   const img = $('displayImg');
   try {
@@ -893,6 +893,7 @@ let photoCategories = [];   // [{name, count}] 供照片时段分类下拉（留
 /* ---- 时段编排：24h 时序控件（磁盘分区式） ---- */
 const TL_TYPES = {
   weather: { label: '天气卡片', icon: '⏰', color: '#0ea5e9' },
+  calendar: { label: '日历卡片', icon: '📅', color: '#f59e0b' },
   photo:   { label: '每日照片', icon: '🖼', color: '#10b981' },
   free:    { label: '自由模块', icon: '✨', color: '#8b5cf6' },
 };

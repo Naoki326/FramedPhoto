@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # 测试隔离同 DB_PATH 模式，见 services/conftest.py）
     free_cache_dir: str = str(Path(__file__).resolve().parent / "free_cache")
     weather_cache_dir: str = str(Path(__file__).resolve().parent / "weather_cache")
+    calendar_cache_dir: str = str(Path(__file__).resolve().parent / "calendar_cache")
     ip_loc_cache_file: str = ""    # 留空 = WEATHER_CACHE_DIR/ip_loc.json
 
     # 浓彩偏置：色域外高饱和色的墨水对混合向彩色端偏移（0 = 忠实混色，

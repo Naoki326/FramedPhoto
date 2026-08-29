@@ -21,8 +21,9 @@ from app.runtime_config import effective
 SLOT_WEATHER = "weather"
 SLOT_PHOTO = "photo"
 SLOT_FREE = "free"
+SLOT_CALENDAR = "calendar"
 
-SLOT_TYPES = {SLOT_WEATHER, SLOT_PHOTO, SLOT_FREE}
+SLOT_TYPES = {SLOT_WEATHER, SLOT_PHOTO, SLOT_FREE, SLOT_CALENDAR}
 MIN_SEGMENT_MIN = 30    # 时序控件允许的最小时段（分钟）
 DAY_MIN = 24 * 60
 
@@ -254,4 +255,5 @@ def segment_start(now: dt.datetime | None = None,
 
 
 def slot_label(slot: str) -> str:
-    return {"weather": "天气卡片", "photo": "每日照片", "free": "自由模块"}.get(slot, slot)
+    return {"weather": "天气卡片", "photo": "每日照片", "free": "自由模块",
+            "calendar": "日历卡片"}.get(slot, slot)

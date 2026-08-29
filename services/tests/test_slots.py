@@ -51,6 +51,18 @@ def test_canonicalize_accepts_int_starts():
     ]
 
 
+def test_canonicalize_accepts_calendar_type():
+    # 日历时段：与 weather 同级的独立内容类型（module/category 恒为 None）
+    assert slots.canonicalize([
+        {"start": "00:00", "type": "calendar"},
+        {"start": "09:00", "type": "photo"},
+    ]) == [
+        {"start": "00:00", "type": "calendar", "module": None, "category": None},
+        {"start": "09:00", "type": "photo", "module": None, "category": None},
+    ]
+    assert slots.slot_label("calendar") == "日历卡片"
+
+
 def test_canonicalize_merges_adjacent_same_type():
     raw = [
         {"start": "06:00", "type": "weather"},

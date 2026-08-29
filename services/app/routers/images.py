@@ -23,6 +23,7 @@ from fastapi.responses import Response
 from PIL import Image
 
 from app import (
+    calendar_card,
     category,
     content_sources,
     daily,
@@ -409,7 +410,8 @@ async def content_list(device_id: str | None = None):
 
     优先级：临时显示（display，一次性上传切换）> 时段编排（见 app.slots，
     slot_segments 分段，未配置时兼容旧 slot_weather / slot_photo / slot_free）：
-      weather 时段 → 天气+日历卡片（QWEATHER_KEY 未配/失败时回退照片）
+      weather  时段 → 天气+日历卡片（QWEATHER_KEY 未配/失败时回退照片）
+      calendar 时段 → 月历日历卡片（纯本地，恒可用）
       photo    时段 → 每日精选照片
       free     时段 → 自由模块卡片（LLM+文生图每日生成；依赖未配置时回退照片）
     可附带设备 id 上报状态。
@@ -427,6 +429,8 @@ async def content_list(device_id: str | None = None):
 
         if slot == slots.SLOT_WEATHER:
             item = weather_card.SOURCE.meta()
+        elif slot == slots.SLOT_CALENDAR:
+            item = calendar_card.SOURCE.meta()
         elif slot == slots.SLOT_FREE:
             item = free_module.SOURCE.meta()
 

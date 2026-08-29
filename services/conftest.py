@@ -19,6 +19,7 @@ os.environ["OTA_DIR"] = os.path.join(_tmp, "ota")
 # 目录与 IP 定位缓存文件（#20，不再 monkeypatch 模块私有路径属性）
 os.environ["FREE_CACHE_DIR"] = os.path.join(_tmp, "free_cache")
 os.environ["WEATHER_CACHE_DIR"] = os.path.join(_tmp, "weather_cache")
+os.environ["CALENDAR_CACHE_DIR"] = os.path.join(_tmp, "calendar_cache")
 os.environ["IP_LOC_CACHE_FILE"] = os.path.join(_tmp, "weather_cache", "ip_loc.json")
 # runtime_config 同样在 conftest 加载期（import 阶段）就重定向到临时文件：
 # 即使某测试进程绕过 _isolate_runtime_config fixture（如直接 import app 后

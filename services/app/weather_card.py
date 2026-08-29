@@ -123,56 +123,10 @@ def _norm_text(text: str) -> str:
 
 
 # ═══════════════════════ 日历信息（节日/节气） ═══════════════════════
-
-# 重要公历/农历节日（过滤掉观莲节等小众节日）
-_MAJOR_FESTIVALS = {
-    "元旦", "春节", "元宵", "情人节", "妇女节", "植树节", "清明", "劳动节", "青年节",
-    "母亲节", "儿童节", "端午", "父亲节", "建党节", "建军节", "七夕", "中元",
-    "教师节", "中秋", "国庆", "重阳", "万圣节", "感恩节", "平安夜", "圣诞",
-    "腊八", "除夕",
-}
-
-
-# 公历节日（lunar_python 的 getOtherFestivals 只含传统节日，公历的需硬编码）
-_SOLAR_FESTIVALS = {
-    (1, 1): "元旦", (2, 14): "情人节", (3, 8): "妇女节", (3, 12): "植树节",
-    (5, 1): "劳动节", (5, 4): "青年节", (6, 1): "儿童节", (7, 1): "建党节",
-    (8, 1): "建军节", (9, 10): "教师节", (10, 1): "国庆节", (12, 24): "平安夜",
-    (12, 25): "圣诞",
-}
-
-
-def _day_mark(d: dt.date) -> str:
-    """当天标注：节气优先，其次公历节日，再传统节日；无返回空串。"""
-    sol = _SOLAR_FESTIVALS.get((d.month, d.day))
-    if sol:
-        return sol
-    try:
-        ll = Solar.fromYmd(d.year, d.month, d.day).getLunar()
-    except Exception:  # noqa: BLE001
-        return ""
-    jq = ll.getJieQi()
-    if jq:
-        return jq
-    for f in ll.getFestivals() + ll.getOtherFestivals():
-        core = f[:-1] if f.endswith("节") else f
-        if f in _MAJOR_FESTIVALS or core in _MAJOR_FESTIVALS:
-            return f if f in _MAJOR_FESTIVALS else core
-    return ""
-
-
-def _calendar_info(today: dt.date, days_ahead: int = 10, max_marks: int = 2) -> tuple[str, str]:
-    """→ (今日标注, 未来预告串)。预告如 "立秋 8/7 · 七夕 8/19"。"""
-    today_mark = _day_mark(today)
-    soon: list[str] = []
-    for i in range(1, days_ahead + 1):
-        d = today + dt.timedelta(days=i)
-        m = _day_mark(d)
-        if m:
-            soon.append(f"{m} {d.month}/{d.day}")
-        if len(soon) >= max_marks:
-            break
-    return today_mark, " · ".join(soon)
+# 节日/节气/农历查询抽到共享模块 calendar_facts（日历卡片同用），此处
+# 以原名引用保持既有调用点不变：_day_mark / _calendar_info。
+from app.calendar_facts import day_mark as _day_mark
+from app.calendar_facts import upcoming_marks as _calendar_info
 
 
 # ═══════════════════════ 风格池 ═══════════════════════
