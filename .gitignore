@@ -48,6 +48,7 @@ _cgi-bin_*
 # --- 运行时状态/缓存（不入库） ---
 services/app/free_cache/
 services/app/weather_cache/
+services/app/calendar_cache/
 services/app/runtime_config.json
 services/app/runtime_config.json.bak-*
 services/preview_cache/
@@ -63,3 +64,6 @@ services/app/profiles/calibrated.json
 # agent 本地基础设施（不入库）
 .pi/
 scripts/workflows/
+
+# NAS 同步收敛的孤儿回收站（保留 7 天自动清）
+services/.sync_trash/

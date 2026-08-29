@@ -98,12 +98,19 @@ acquire_lock() {
 
 acquire_lock
 
-# ---------- 远程照片统计（排除视频，进度分母） ----------
+# 本次同步开始时刻：relocate-post 的孤儿判定 cutoff
+# （晚于此落盘的本地文件视为待推送 NAS 的上传，不入回收站）
+SYNC_START_TS=$(date +%s)
+# 远端清单临时文件（exit 时与锁一起清理）
+MANIFEST="$(mktemp /tmp/framedphoto-manifest.XXXXXX)"
+trap 'rm -rf "$LOCK_DIR"; rm -f "$MANIFEST"' EXIT
+
+# ---------- 远端图片清单（排除视频）：进度分母 + 重组收敛依据 ----------
 # SSH keepalive：长连接（限速下可达数小时）中途空闲易被 NAT/对端断开，
 # 每 30s 发保活包，4 次无响应才判定死连接
 SSH_KEEPALIVE=(-o ServerAliveInterval=30 -o ServerAliveCountMax=4)
 
-fetch_remote_stats() {
+fetch_remote_manifest() {
   ssh -p "$NAS_SSH_PORT" -o ConnectTimeout=15 "${SSH_KEEPALIVE[@]}" \
     "${NAS_SSH_USER}@${SSH_HOST}" \
     "cd '${NAS_PHOTO_DIR}' && find . -type f \
@@ -113,8 +120,8 @@ fetch_remote_stats() {
           -o -iname '*.tif' -o -iname '*.tiff' -o -iname '*.cr2' -o -iname '*.nef' \
           -o -iname '*.arw' -o -iname '*.dng' -o -iname '*.raf' -o -iname '*.orf' \
           -o -iname '*.rw2' -o -iname '*.pef' -o -iname '*.srw' -o -iname '*.x3f' \) \
-       -exec stat -c '%s' {} \; 2>/dev/null | awk '{s+=\$1; n++} END {print n, s}'" \
-    || echo "0 0"
+       -exec stat -c '%s|%Y|%n' {} \; 2>/dev/null" \
+    || true
 }
 
 # 白名单：只同步图片文件（相框只需照片），其余一律排除。
@@ -149,12 +156,25 @@ fi
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && { ARGS+=(--dry-run); DRY_RUN=1; shift; }
 
-# ---------- 启动：状态初始化 ----------
+# ---------- 启动：拉清单、还原重组、状态初始化 ----------
 log "同步 ${NAS_SSH_USER}@${SSH_HOST}:${NAS_PHOTO_DIR}/ -> ${LOCAL_PHOTO_DIR}/"
-STATS=$(fetch_remote_stats)
-TOTAL_FILES=$(echo "$STATS" | awk '{print $1}')
-TOTAL_BYTES=$(echo "$STATS" | awk '{print $2}')
+fetch_remote_manifest > "$MANIFEST"
+TOTAL_FILES=$(wc -l < "$MANIFEST" | tr -d ' ')
+TOTAL_BYTES=$(awk -F'|' '{s+=$1} END {print s+0}' "$MANIFEST")
 log "远程图片: ${TOTAL_FILES:-0} 个文件 / $(( ${TOTAL_BYTES:-0} / 1024 / 1024 )) MB"
+
+# 阶段一（rsync 前）：NAS 重组过目录时，把本地文件按 (basename,size,mtime)
+# 挪到远端新路径，rsync 只传真正新增的照片（不再全量重传）。
+# 清单为空 = SSH 失败或 NAS 库被清空：跳过收敛（保守，不误删不误挪）。
+RELOCATE_PY="${RELOCATE_PY:-services/.venv/bin/python}"
+if [ -s "$MANIFEST" ] && [ "$DRY_RUN" -eq 0 ]; then
+  if OUT=$(PYTHONPATH=services "$RELOCATE_PY" -m app.nas_sync relocate-pre \
+        --manifest "$MANIFEST" --photos "$LOCAL_PHOTO_DIR" 2>&1); then
+    log "$OUT"
+  else
+    log "警告：relocate-pre 失败（继续 rsync，仅损失流量优化）：$OUT"
+  fi
+fi
 if [ "$DRY_RUN" -eq 1 ]; then
   write_status \
     "status" "running" "percent" 0 \
@@ -231,6 +251,19 @@ if [ "$RC" -eq 0 ]; then
                  "avg_speed_kb" "${AVG_SPEED_KB}" \
                  "last_sync" "$(date +%s)"
     log "同步完成。接下来可分析：python tools/analyze_photos.py ${LOCAL_PHOTO_DIR} -j 4"
+    # 阶段二（rsync 后）：镜像收敛（ADR-0007）——NAS 已删的本地孤儿入回收站
+    # （services/.sync_trash，保留 7 天），photo_scores 失效路径按内容哈希
+    # 迁移、无主记录删除（否则管理台照片库裂图）。
+    if [ -s "$MANIFEST" ]; then
+      if OUT=$(PYTHONPATH=services "$RELOCATE_PY" -m app.nas_sync relocate-post \
+            --manifest "$MANIFEST" --photos "$LOCAL_PHOTO_DIR" \
+            --db services/framedphoto.db --trash services/.sync_trash \
+            --cutoff "$SYNC_START_TS" 2>&1); then
+        log "$OUT"
+      else
+        log "警告：relocate-post 失败（孤儿/评分未收敛，可重跑同步）：$OUT"
+      fi
+    fi
     # 自动分析（默认开，NAS_AUTO_ANALYZE=0 关闭）：同步后自动跑启发式评分，
     # 让新同步的照片（如各用户 Frame_* 文件夹）直接进照片库参与分类与选片。
     # 启发式本地计算不花钱（VLM 分析仍手动），断点续跑只分析新增未分析照片。
