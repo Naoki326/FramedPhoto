@@ -79,6 +79,9 @@ python tools/analyze_photos.py /path/to/photos [-j 4]
 
 - 每次显示后**深度休眠**（`idf.py menuconfig` → `FRAMEDPHOTO_DEEP_SLEEP_MIN`，
   默认 30min，0 = 禁用调试）
+- **唤醒对齐**：心跳响应的 server_time 校准设备墙钟，默认睡到下一个本地
+  半点边界加一分钟（每个整点的 ：01 / :31）再 RTC 唤醒（`FRAMEDPHOTO_ALIGN_WAKE`，
+  时区 `FRAMEDPHOTO_TIMEZONE` 默认北京时间）；时钟从未校准过时退回固定间隔
 - RTC 定时器唤醒 → 检查内容 → 无变化不刷屏直接再睡（上次内容存 NVS）
 - **刷新按钮**：按下立即拉取并刷新（`FRAMEDPHOTO_BUTTON_GPIO`，默认 GPIO 0 =
   板上 BOOT 键，零接线）。深度休眠中按下走 EXT1 唤醒，强制刷新一次；

@@ -3,7 +3,8 @@ devices.py — 设备注册 / 心跳 / 状态查询（SQLite 持久化）。
 
 - POST /register         注册设备（device_id 或 mac），返回注册信息
 - POST /{id}/heartbeat   心跳：上报固件版本/电量/当前内容/IP，更新 last_seen；
-                         响应携带待下发 WiFi 配置（wifi_pending 时）
+                         响应携带待下发 WiFi 配置（wifi_pending 时）与 server_time
+                         （UTC epoch 秒，设备校准本地时钟、对齐唤醒时刻用）
 - PUT  /{id}/wifi-config 管理台设置待下发 WiFi 配置（pending 置位）
 - GET  ""                设备列表（按最近心跳排序）
 - GET  /{id}             单设备详情
@@ -12,6 +13,7 @@ devices.py — 设备注册 / 心跳 / 状态查询（SQLite 持久化）。
 import logging
 import shutil
 import subprocess
+import time
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
@@ -49,6 +51,8 @@ class HeartbeatBody(BaseModel):
     ip: str = ""
     uptime_s: int = Field(default=0, description="设备开机时长（秒）")
     wifi_config_applied: bool = Field(default=False, description="设备已应用上次下发的 WiFi 配置")
+    device_time: float | None = Field(default=None, description="设备自身时钟（epoch 秒，遥测）")
+    next_wake_s: int | None = Field(default=None, description="唤醒对齐判定结果（秒，-1=回退固定间隔）")
 
 
 class WifiConfigBody(BaseModel):
@@ -58,8 +62,10 @@ class WifiConfigBody(BaseModel):
 
 @router.post("/{device_id}/heartbeat")
 async def heartbeat(device_id: str, body: HeartbeatBody):
-    logger.info("heartbeat from %s: version=%s uptime=%ss img=%s", device_id,
-                body.firmware_version, body.uptime_s, body.current_image)
+    logger.info("heartbeat from %s: version=%s uptime=%ss img=%s device_time=%s next_wake=%ss",
+                device_id,
+                body.firmware_version, body.uptime_s, body.current_image,
+                body.device_time, body.next_wake_s)
     if not db.get_device(device_id):
         db.upsert_device(device_id)
     db.upsert_device(
@@ -73,8 +79,9 @@ async def heartbeat(device_id: str, body: HeartbeatBody):
     # 设备确认已应用 WiFi 配置 → 清 pending
     if body.wifi_config_applied:
         db.upsert_device(device_id, wifi_pending=0)
-    # 心跳响应携带待下发配置
-    resp: dict = {"ok": True, "device_id": device_id, "poll_interval_min": None}
+    # 心跳响应携带待下发配置 + 服务器时间（设备校准时钟、唤醒对齐用）
+    resp: dict = {"ok": True, "device_id": device_id, "poll_interval_min": None,
+                  "server_time": int(time.time())}
     dev = db.get_device(device_id)
     if dev and dev.get("wifi_pending"):
         resp["wifi_config"] = {"ssid": dev.get("wifi_ssid", ""), "password": dev.get("wifi_password", "")}

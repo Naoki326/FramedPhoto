@@ -43,7 +43,29 @@ menu "FramedPhoto Application"
             0 表示禁用（保持轮询，适合调试）。启用后设备每次唤醒
             检查内容，无变化则不刷屏直接再睡，实现长期续航。
             例：30 = 半小时唤醒一次，1440 = 每天一次。
+            启用唤醒对齐（FRAMEDPHOTO_ALIGN_WAKE）时此项退为兑底：
+            仅在时钟从未校准过时使用。
 
+    config FRAMEDPHOTO_ALIGN_WAKE
+        bool "Align wake time to half-hour boundary (+1 min)"
+        default y
+        depends on FRAMEDPHOTO_DEEP_SLEEP_MIN > 0
+        help
+            深睡前按心跳校准的墙钟计算，睡到下一个本地半点边界加一分钟
+            （每个整点的 ：01 / :31）再唤醒，刷新节拍可预期、好控制。
+            时间来源：心跳响应的 server_time（本地服务端就在局域网，
+            不依赖外网 NTP）。深睡期间 RTC 持续计时，偶发心跳失败仍按
+            上次校准的时间对齐；时钟从未校准过时回退
+            FRAMEDPHOTO_DEEP_SLEEP_MIN 固定间隔。
+
+    config FRAMEDPHOTO_UTC_OFFSET_HOURS
+        int "Local UTC offset (hours) for wake alignment"
+        default 8
+        range -12 14
+        help
+            唤醒对齐用的本地时区偏移（整小时）。北京时间填 8。
+            固定偏移，不支持夏令时（中国无需）；对齐计算用它把
+            epoch 换算到本地钟面，纯整数运算不经 libc 时区。
     config FRAMEDPHOTO_BUTTON_GPIO
         int "Refresh button GPIO (-1 = disabled)"
         default -1

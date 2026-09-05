@@ -5,6 +5,7 @@ idf_component_register(
         "wifi_config.c"
         "device_client.c"
         "display.c"
+        "wake_align.c"
         "content_client.c"
         "ota_client.c"
         "http_util.c"

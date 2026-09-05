@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
+#include "esp_attr.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -26,6 +28,7 @@
 #include "device_id.h"
 #include "http_util.h"
 #include "device_client.h"
+#include "wake_align.h"
 #include "wifi_app.h"
 
 static const char *TAG = "device";
@@ -84,6 +87,22 @@ static esp_err_t sta_ip(char *out, size_t len)
 
 /* ---------------- 心跳 + WiFi 配置处理 ---------------- */
 
+/* 心跳校准的墙钟基准（RTC RAM：跨深睡/软重启保留，断电清零）。
+ * 墙钟 = s_wall_base_s + esp_timer 计数。不用 settimeofday：
+ * 0.1.10-0.1.12 真机遥测证明 IDF v6 上它对 time() 无效
+ * （device_time 恒为开机以来的裸计数），墙钟自管最可靠。 */
+static RTC_DATA_ATTR int64_t s_wall_base_s;
+static RTC_DATA_ATTR bool s_wall_valid;
+
+bool device_client_wall_time(time_t *out)
+{
+    if (!s_wall_valid) {
+        return false;
+    }
+    *out = (time_t)(s_wall_base_s + esp_timer_get_time() / 1000000);
+    return true;
+}
+
 esp_err_t device_client_heartbeat(void)
 {
     char id[32];
@@ -99,6 +118,10 @@ esp_err_t device_client_heartbeat(void)
     bool applied_ack = false;
     nvs_get_flag("wifi", "applied_ack", &applied_ack);
 
+    /* 遥测：设备墙钟现状 + 唤醒对齐判定结果（服务端日志可观测，
+     * 排查对齐失效用，无串口也能定位）。注意 body 在 server_time
+     * 校准前组装，device_time 反映的是上一次心跳校准的墙钟。 */
+
     /* 组装 body */
     cJSON *root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "firmware_version", CONFIG_FRAMEDPHOTO_FW_VERSION);
@@ -107,6 +130,13 @@ esp_err_t device_client_heartbeat(void)
     cJSON_AddNumberToObject(root, "uptime_s",
                             (double)(esp_timer_get_time() / 1000000ULL));
     cJSON_AddBoolToObject(root, "wifi_config_applied", applied_ack);
+    time_t wall;
+    cJSON_AddNumberToObject(root, "device_time",
+                            device_client_wall_time(&wall) ? (double)wall : -1.0);
+    int64_t next_wake_us = device_client_wall_time(&wall)
+                               ? wake_align_next_wake_us_at(wall) : -1;
+    cJSON_AddNumberToObject(root, "next_wake_s",
+                            next_wake_us < 0 ? -1 : (double)(next_wake_us / 1000000));
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!body) {
@@ -124,6 +154,16 @@ esp_err_t device_client_heartbeat(void)
     if (!resp) {
         ESP_LOGW(TAG, "heartbeat failed: %s", esp_err_to_name(err));
         return err;
+    }
+
+    /* 服务端时间校准：心跳是每次与服务器连接的必经点，响应 server_time
+     * （UTC epoch 秒）即权威时钟；唤醒对齐（wake_align）依赖它。
+     * 记录「墙钟基准」（而非 settimeofday —— 在 IDF v6 上对 time() 无效），
+     * 读取走 device_client_wall_time。 */
+    cJSON *st = cJSON_GetObjectItem(resp, "server_time");
+    if (cJSON_IsNumber(st) && st->valuedouble > 1000000000.0) {
+        s_wall_base_s = (int64_t)st->valuedouble - esp_timer_get_time() / 1000000;
+        s_wall_valid = true;
     }
 
     cJSON *wifi = cJSON_GetObjectItem(resp, "wifi_config");

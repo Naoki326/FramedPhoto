@@ -8,6 +8,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,6 +16,10 @@ extern "C" {
 
 /** 上报心跳并处理服务端下发的 WiFi 配置（需已连接 WiFi）。失败返回非零。 */
 esp_err_t device_client_heartbeat(void);
+
+/** 当前墙钟（epoch 秒，由最近一次成功心跳的 server_time + esp_timer 推算）。
+ * 时钟从未校准过（断电后尚未成功心跳）返回 false。 */
+bool device_client_wall_time(time_t *out);
 
 #ifdef __cplusplus
 }

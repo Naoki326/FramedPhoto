@@ -3,12 +3,14 @@
  *
  * 事件回调注册（esp_http_client 事件 → 逐块回调）、超时设置、POST 头与
  * body 设置、连接清理全部收在本文件，对 http_util 调用方不可见。
- * 链接期以强符号覆盖 http_util.c 的弱默认 http_util_default_perform。
+ * 安装方式：app_main 调用 http_util_esp_install() 运行时注入（http_util_set_transport），
+ * 不依赖链接期强符号覆盖弱默认（归档顺序会导致后端丢失，见 http_util_esp.h 教训）。
  */
 #include <string.h>
 #include "esp_err.h"
 #include "esp_http_client.h"
 #include "http_util.h"
+#include "http_util_esp.h"
 
 typedef struct {
     http_util_chunk_cb_t cb;
@@ -24,8 +26,8 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-esp_err_t http_util_default_perform(void *ctx, const http_util_request_t *req,
-                                    http_util_chunk_cb_t on_chunk, void *on_chunk_ctx)
+static esp_err_t http_util_esp_perform(void *ctx, const http_util_request_t *req,
+                                       http_util_chunk_cb_t on_chunk, void *on_chunk_ctx)
 {
     (void)ctx;
     chunk_bridge_t bridge = { .cb = on_chunk, .cb_ctx = on_chunk_ctx };
@@ -53,4 +55,9 @@ esp_err_t http_util_default_perform(void *ctx, const http_util_request_t *req,
     esp_err_t err = esp_http_client_perform(client);
     esp_http_client_cleanup(client);
     return err;
+}
+
+void http_util_esp_install(void)
+{
+    http_util_set_transport(http_util_esp_perform, NULL);
 }

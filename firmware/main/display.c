@@ -29,6 +29,7 @@
 #include "content_client.h"
 #include "ota_client.h"
 #include "display.h"
+#include "wake_align.h"
 #include "fps6_format.h"
 
 static const char *TAG = "display";
@@ -287,7 +288,9 @@ static esp_err_t update_from_server(bool force)
 }
 
 /* 深度休眠：RTC 定时器 + 按钮（EXT1）唤醒；唤醒后从 app_main 重启，
- * 内容未变则不再刷屏（按钮唤醒除外——用户主动按 = 想看新内容，强制刷）。 */
+ * 内容未变则不再刷屏（按钮唤醒除外——用户主动按 = 想看新内容，强制刷）。
+ * 休眠时长优先对齐到下一个本地 :01/:31（心跳校准的墙钟，见 wake_align），
+ * 时钟从未校准过（如全新上电一直连不上服务端）回退固定间隔。 */
 static void maybe_deep_sleep(void)
 {
     if (CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN <= 0) {
@@ -300,9 +303,19 @@ static void maybe_deep_sleep(void)
         ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup_io(
             BTN_ENABLED ? (1ULL << CONFIG_FRAMEDPHOTO_BUTTON_GPIO) : 0, mode));
     }
-    ESP_LOGI(TAG, "deep sleep %d min", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN);
-    esp_sleep_enable_timer_wakeup(
-        (uint64_t)CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL);
+    uint64_t sleep_us;
+    time_t wall_now;
+    int64_t aligned_us = device_client_wall_time(&wall_now)
+                             ? wake_align_next_wake_us_at(wall_now)
+                             : -1;
+    if (aligned_us > 0) {
+        sleep_us = (uint64_t)aligned_us;
+    } else {
+        sleep_us = (uint64_t)CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN * 60ULL * 1000000ULL;
+        ESP_LOGI(TAG, "wake alignment unavailable, fixed %d min", CONFIG_FRAMEDPHOTO_DEEP_SLEEP_MIN);
+    }
+    ESP_LOGI(TAG, "deep sleep %llu s", (unsigned long long)(sleep_us / 1000000ULL));
+    esp_sleep_enable_timer_wakeup(sleep_us);
     esp_deep_sleep_start();
 }
 
@@ -350,8 +363,10 @@ static void display_task(void *arg)
             ESP_LOGI(TAG, "refresh button: forcing update");
         }
 
-        /* 先执行一次内容拉取 + OTA 检查，再进入轮询等待 */
-        if (wifi_app_wait_connected(force ? 15000 : 3000) == ESP_OK) {
+        /* 先执行一次内容拉取 + OTA 检查，再进入轮询等待。
+         * 统一等 15s：非强制轮只等 3s 时，深睡唤醒后 WiFi 关联偶发超过
+         * 3s，整轮心跳/内容全部跳过且服务端无痕（0.1.10 真机教训）。 */
+        if (wifi_app_wait_connected(15000) == ESP_OK) {
             update_from_server(force);
         } else if (!s_shown_any) {
             /* 离线兜底：仅全新设备（NVS 无记录）显示棋盘格便于无网调试；

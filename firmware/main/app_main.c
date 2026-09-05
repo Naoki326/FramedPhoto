@@ -10,20 +10,26 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 #include "gdeb0709e01.h"
 #include "wifi_app.h"
 #include "wifi_config.h"
 #include "ota_client.h"
+#include "http_util_esp.h"
 #include "display.h"
 
 static const char *TAG = "app_main";
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "FramedPhoto v%s starting", "0.1.0-dev");
+    ESP_LOGI(TAG, "FramedPhoto v%s starting", CONFIG_FRAMEDPHOTO_FW_VERSION);
 
     /* 0. OTA 回滚确认：新固件首次启动尽早标记有效 */
     ota_client_init();
+
+    /* 0.5 HTTP 传输后端：运行时显式安装（esp_http_client），
+     * 必须在任何心跳/内容/OTA 请求之前（教训见 http_util_esp.h） */
+    http_util_esp_install();
 
     /* 1. NVS */
     esp_err_t err = nvs_flash_init();

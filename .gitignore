@@ -18,6 +18,8 @@ firmware/managed_components/
 firmware/.build/
 firmware/host_tests/test_http_util
 firmware/host_tests/test_http_util.dSYM
+firmware/host_tests/test_wake_align
+firmware/host_tests/test_wake_align.dSYM
 
 # --- Python / 服务端 ---
 services/.venv/
