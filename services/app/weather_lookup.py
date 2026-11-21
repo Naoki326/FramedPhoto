@@ -8,6 +8,7 @@ import requests
 from fastapi import APIRouter
 
 from app.config import settings
+from app.runtime_config import effective
 
 router = APIRouter()
 
@@ -46,11 +47,12 @@ async def lookup_city(location: str):
         return {"location": [{"name": name, "id": _FALLBACK_CITY_IDS[name], "adm1": "上海"}]}
 
     # 2) 和风 GeoAPI 城市查询（可能 404 / 超时 / 未开通）
-    if settings.qweather_key:
+    weather_key = str(effective("weather_key", settings) or "")
+    if weather_key:
         try:
             r = requests.get(
                 "https://geoapi.qweather.com/v2/city/lookup",
-                params={"location": name, "key": settings.qweather_key},
+                params={"location": name, "key": weather_key},
                 timeout=8,
             )
             data = r.json()
@@ -72,12 +74,12 @@ async def lookup_city(location: str):
                               "adm1": "", "lat": "", "lon": ""}]}
 
     # 4) 和风天气 API 直接试中文（个别城市可用）
-    if settings.qweather_key:
+    if weather_key:
         try:
             from app.weather_card import QWEATHER_BASE
-            base = QWEATHER_BASE.format(host=settings.qweather_host)
+            base = QWEATHER_BASE.format(host=effective("weather_host", settings))
             r = requests.get(f"{base}/now",
-                             params={"location": name, "key": settings.qweather_key}, timeout=8)
+                             params={"location": name, "key": weather_key}, timeout=8)
             d = r.json()
             if d.get("code") == "200":
                 return {"location": [{

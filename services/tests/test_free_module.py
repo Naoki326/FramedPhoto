@@ -22,10 +22,13 @@ from app.config import settings  # noqa: E402
 @pytest.fixture(autouse=True)
 def _no_external_apis(monkeypatch, tmp_path):
     """禁用外部 API（LLM / 即梦 / 通用文生图），缓存目录隔离，模块级缓存复位。"""
-    monkeypatch.setattr(settings, "zhipu_api_key", "")
-    monkeypatch.setattr(settings, "jimeng_access_key", "")
-    monkeypatch.setattr(settings, "jimeng_secret_key", "")
-    monkeypatch.setattr(settings, "imagegen_url", "")
+    monkeypatch.setattr(settings, "text_api_key", "")
+    monkeypatch.setattr(settings, "text_base_url", "")
+    monkeypatch.setattr(settings, "image_signed_ak", "")
+    monkeypatch.setattr(settings, "image_api", "openai")
+    monkeypatch.setattr(settings, "image_api_url", "")
+    monkeypatch.setattr(settings, "image_signed_sk", "")
+    monkeypatch.setattr(settings, "image_model", "")
     monkeypatch.setattr(fm, "CACHE_DIR", tmp_path / "free_cache")
     monkeypatch.setattr(fm, "HISTORY_FILE", tmp_path / "free_history.json")
     monkeypatch.setattr(fm, "free_enabled", lambda: True)

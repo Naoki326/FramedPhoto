@@ -40,7 +40,7 @@ def test_render_month_size():
 
 
 def test_render_calendar_card_fps6(monkeypatch):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "")   # 寄语走降级
+    monkeypatch.setattr("app.config.settings.text_api_key", "")   # 寄语走降级
     data = calendar_card.render_calendar_card()
     assert data
     prepared = parse_fps6(data)          # magic / 长度校验
@@ -50,7 +50,7 @@ def test_render_calendar_card_fps6(monkeypatch):
 
 
 def test_render_calendar_slot_fields(monkeypatch):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "")
+    monkeypatch.setattr("app.config.settings.text_api_key", "")
     meta = calendar_card.render_calendar_slot()
     assert meta
     assert meta["id"].startswith("calendar-")
@@ -59,7 +59,7 @@ def test_render_calendar_slot_fields(monkeypatch):
 
 
 def test_calendar_original_png_roundtrip(monkeypatch):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "")
+    monkeypatch.setattr("app.config.settings.text_api_key", "")
     assert calendar_card.render_calendar_card()
     png = calendar_card.calendar_original_png()
     assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
@@ -68,7 +68,7 @@ def test_calendar_original_png_roundtrip(monkeypatch):
 # ---------- 每日寄语 ----------
 
 def test_quote_fallback_stable_without_llm(monkeypatch):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "")
+    monkeypatch.setattr("app.config.settings.text_api_key", "")
     today = dt.date(2026, 8, 5)
     q1 = calendar_card.daily_quote(today)
     q2 = calendar_card.daily_quote(today)
@@ -77,7 +77,7 @@ def test_quote_fallback_stable_without_llm(monkeypatch):
 
 
 def test_quote_llm_result_cached(monkeypatch, tmp_path):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "fake")
+    monkeypatch.setattr("app.config.settings.text_api_key", "fake")
     monkeypatch.setattr(calendar_card, "_quote_llm", lambda t, c: "家有暖灯与热汤")
     assert calendar_card.daily_quote(dt.date(2026, 9, 1)) == "家有暖灯与热汤"
     # LLM 掉线后仍命中磁盘缓存（当天固定）
@@ -86,7 +86,7 @@ def test_quote_llm_result_cached(monkeypatch, tmp_path):
 
 
 def test_quote_llm_rejects_overlong(monkeypatch):
-    monkeypatch.setattr("app.config.settings.zhipu_api_key", "fake")
+    monkeypatch.setattr("app.config.settings.text_api_key", "fake")
     from unittest.mock import patch
     fake = {"choices": [{"message": {"content": json.dumps({"quote": "超" * 40})}}]}
     with patch("app.calendar_card.requests.post") as p:

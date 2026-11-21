@@ -1,6 +1,7 @@
 """weather_card.py — 天气 + 日历卡片（多风格，每日轮换）。
 
-数据源：和风天气（devapi.qweather.com，QWEATHER_KEY）。
+数据源：天气 API（默认和风天气，devapi.qweather.com；key/host 经 WEATHER_KEY /
+WEATHER_HOST 或管理台「AI 模型」页可改）。
 渲染：PIL 排版（中文用 find_cjk_font）→ FPS6（epd_image.prepare_image）。
 无 key / 请求失败时：render_weather_slot() 返回 None，调用方回退其他时段内容。
 
@@ -8,7 +9,7 @@
   - 风格池 STYLES（apple / blue / magazine / classic），按日期 toordinal 每日轮换，
     同一天内（含 1 小时数据刷新缓存）风格固定，跨天自动换款。
   - 管理台可用 weather_style 固定某一款（auto = 每日轮换）。
-  - LLM 每日微调（可选）：配置了 zhipu_api_key 时，每天由 LLM 从受限枚举中选择
+  - LLM 每日微调（可选）：配置了文本 LLM key 时，每天由 LLM 从受限枚举中选择
     「强调色 / 标题条深浅 / 装饰符号 / 是否显示农历」，生成 JSON 缓存到磁盘；
     无 key 或 LLM 失败 → 默认设计参数，不影响渲染。
 """
@@ -29,6 +30,8 @@ from lunar_python import Solar
 
 from app.config import settings
 from app.epd_image import find_cjk_font, prepare_image
+from app import llm
+from app.runtime_config import effective
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +92,9 @@ def ip_location() -> dict | None:
 def resolve_location() -> tuple[str, str]:
     """返回 (和风 location 参数, 城市显示名)。运行时配置 > .env > IP 自动定位。"""
     from app.runtime_config import effective
-    loc_id = effective("qweather_location", settings) or ""
-    city = effective("qweather_city", settings) or ""
-    # 用户显式设置过城市（qweather_city 或 location），就尊重它；
+    loc_id = effective("weather_location", settings) or ""
+    city = effective("weather_city", settings) or ""
+    # 用户显式设置过城市（weather_city 或 location），就尊重它；
     # 完全没设过（location 还是默认北京 ID 且 city 为空）才走 IP 自动定位。
     if not loc_id:
         if city:
@@ -166,11 +169,11 @@ _DESIGN_DECOS = ("none", "sun", "star", "snow", "wave")
 
 
 def _llm_design_json(style: str, summary: str) -> dict | None:
-    """调智谱 GLM（OpenAI 兼容端点）生成受限设计参数 JSON。失败返回 None。"""
-    key = settings.zhipu_api_key
+    """调文本 LLM（OpenAI 兼容端点）生成受限设计参数 JSON。失败返回 None。"""
+    key = llm.text_key()
     if not key:
         return None
-    url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    url, model = llm.text_url_and_model()
     system = (
         "你是墨水屏天气卡片的设计师。墨水屏只有 6 色：黑/白/黄/红/蓝/绿，"
         "设计必须高对比、扁平、克制。根据给定的天气与风格，从受限选项中挑选设计参数，"
@@ -190,7 +193,7 @@ def _llm_design_json(style: str, summary: str) -> dict | None:
             url,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={
-                "model": settings.zhipu_model,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -254,19 +257,20 @@ def _daily_design(style: str, today: dt.date) -> dict:
 
 def fetch_weather() -> dict | None:
     """拉取实时天气 + 3 日预报。无 key/失败返回 None。"""
-    if not settings.qweather_key:
+    key = str(effective("weather_key", settings) or "")
+    if not key:
         return None
-    base = QWEATHER_BASE.format(host=settings.qweather_host)
+    base = QWEATHER_BASE.format(host=effective("weather_host", settings))
     try:
         loc, city = resolve_location()
-        params = {"location": loc, "key": settings.qweather_key}
+        params = {"location": loc, "key": key}
         now = requests.get(f"{base}/now", params=params, timeout=10).json()
         f3d = requests.get(f"{base}/3d", params=params, timeout=10).json()
         if now.get("code") != "200" or f3d.get("code") != "200":
-            logger.warning("qweather error: now=%s 3d=%s", now.get("code"), f3d.get("code"))
+            logger.warning("weather api error: now=%s 3d=%s", now.get("code"), f3d.get("code"))
             return None
         now_d = now["now"]
-        now_d["city"] = city or settings.qweather_city
+        now_d["city"] = city or settings.weather_city
         out = {"now": now_d, "daily": f3d.get("daily", [])}
         try:
             (CACHE_DIR / "latest_weather.json").write_text(
@@ -281,12 +285,14 @@ def fetch_weather() -> dict | None:
 
 def _fetch_city() -> str:
     """城市名：优先配置，其次 GeoAPI（失败返回空）。"""
-    if settings.qweather_city:
-        return settings.qweather_city
+    city = str(effective("weather_city", settings) or "")
+    if city:
+        return city
     try:
         r = requests.get(
             "https://geoapi.qweather.com/v2/city/lookup",
-            params={"location": settings.qweather_location, "key": settings.qweather_key},
+            params={"location": effective("weather_location", settings),
+                    "key": effective("weather_key", settings)},
             timeout=10,
         )
         loc = (r.json().get("location") or [{}])[0]

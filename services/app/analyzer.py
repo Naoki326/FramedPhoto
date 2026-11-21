@@ -29,6 +29,7 @@ import requests
 from PIL import Image, ImageStat
 
 from app.config import settings
+from app.runtime_config import effective
 
 logger = logging.getLogger(__name__)
 
@@ -206,10 +207,11 @@ def _parse_json_block(text: str) -> dict:
 
 
 def _proxies() -> dict | None:
-    """从配置构造 requests 代理（空则 None = 直连）。"""
-    if not settings.vlm_proxy:
+    """构造 requests 代理（空则 None = 直连）。管理台可改，即时生效。"""
+    proxy = effective("vlm_proxy", settings) or ""
+    if not proxy:
         return None
-    return {"http": settings.vlm_proxy, "https": settings.vlm_proxy}
+    return {"http": proxy, "https": proxy}
 
 
 class OpenAICompatClient:
@@ -429,28 +431,33 @@ def build_client() -> AnthropicClient | OpenAICompatClient | OpenAIResponsesClie
 
     auto：有 ANTHROPIC_API_KEY 优先 Claude，其次 OpenAI 兼容，都没有则 None。
     mode=responses 时返回 OpenAIResponsesClient（/v1/responses）。
+    取值一律经 runtime_config.effective：管理台「AI 模型」页覆盖优先，
+    .env/默认值兜底，改完即时生效（无需重启）。
     """
-    provider = settings.vlm_provider.strip().lower()
+    provider = str(effective("vlm_provider", settings) or "").strip().lower()
     if provider == "disabled":
         return None
+    api_url = effective("vlm_api_url", settings) or ""
+    api_key = effective("vlm_api_key", settings) or ""
+    model = effective("vlm_model", settings) or ""
+    timeout = int(effective("vlm_timeout", settings) or 600)
+    anthropic_key = effective("anthropic_api_key", settings) or ""
 
     def _openai():
-        if settings.vlm_api_mode.strip().lower() == "responses":
-            return OpenAIResponsesClient(settings.vlm_api_url, settings.vlm_api_key,
-                                         settings.vlm_model, settings.vlm_timeout)
-        return OpenAICompatClient(settings.vlm_api_url, settings.vlm_api_key,
-                                  settings.vlm_model, settings.vlm_timeout)
+        if str(effective("vlm_api_mode", settings) or "").strip().lower() == "responses":
+            return OpenAIResponsesClient(api_url, api_key, model, timeout)
+        return OpenAICompatClient(api_url, api_key, model, timeout)
 
     if provider == "anthropic":
-        return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
-                               settings.vlm_timeout, settings.anthropic_base_url)
+        return AnthropicClient(anthropic_key, effective("anthropic_model", settings),
+                               timeout, effective("anthropic_base_url", settings))
     if provider == "openai":
         return _openai()
     # auto
-    if settings.anthropic_api_key:
-        return AnthropicClient(settings.anthropic_api_key, settings.anthropic_model,
-                               settings.vlm_timeout, settings.anthropic_base_url)
-    if settings.vlm_api_url:
+    if anthropic_key:
+        return AnthropicClient(anthropic_key, effective("anthropic_model", settings),
+                               timeout, effective("anthropic_base_url", settings))
+    if api_url:
         return _openai()
     return None
 
@@ -460,7 +467,7 @@ def generate_random_caption(path: str) -> str:
 
     每次调用 prompt 要求随机角度；VLM 不可用/失败时返回空字符串（调用方回退）。
     """
-    if not settings.vlm_enabled:
+    if not effective("vlm_enabled", settings):
         return ""
     client = build_client()
     if client is None:
@@ -485,7 +492,7 @@ def analyze_image(path: str, use_vlm: bool | None = None) -> Analysis:
     filename = os.path.basename(path)
     shot_at, gps_lat, gps_lon, shot_source = extract_exif(path)
 
-    want_vlm = settings.vlm_enabled if use_vlm is None else use_vlm
+    want_vlm = effective("vlm_enabled", settings) if use_vlm is None else use_vlm
 
     if want_vlm:
         try:

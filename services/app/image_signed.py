@@ -1,11 +1,14 @@
-"""jimeng.py — 即梦 AI 图片生成 4.6（火山引擎视觉智能，异步任务式）。
+"""image_signed.py — 签名式异步文生图接入（提交任务 + 轮询取图）。
 
 流程：
-  1. CVSync2AsyncSubmitTask 提交任务 → data.task_id
-  2. CVSync2AsyncGetResult 轮询 → data.status == done → data.image_urls[]
+  1. 提交任务 → data.task_id
+  2. 轮询任务 → data.status == done → data.image_urls[]
   3. 下载图片字节
 
-鉴权：火山引擎 V4 签名（Region=cn-north-1, Service=cv，AK/SK）。
+鉴权：厂商 V4 签名（HMAC-SHA256，Region / Service / 请求 Action 随厂商）。
+本文件是**唯一**与具体签名式厂家绑定的地方（ENDPOINT / REGION / SERVICE /
+REQ_KEY / ACTION 名）：换厂家只改这组模块常量，配置面（app/llm.py：
+image_api / image_signed_ak / image_signed_sk）与调用方均不感知厂家。
 """
 from __future__ import annotations
 
@@ -20,9 +23,11 @@ import urllib.parse
 import requests
 
 from app.config import settings
+from app import llm
 
 logger = logging.getLogger(__name__)
 
+# ── 厂家绑定：换签名式文生图厂家只改这一段 ──
 HOST = "visual.volcengineapi.com"
 ENDPOINT = f"https://{HOST}"
 REGION = "cn-north-1"
@@ -80,9 +85,9 @@ def _sign_v4(access_key: str, secret_key: str, query: str, body: str) -> dict:
 
 def _api(action: str, body: dict) -> dict:
     """调用视觉智能 API，返回 JSON。签名失败/异常抛错。"""
-    ak, sk = settings.jimeng_access_key, settings.jimeng_secret_key
+    ak, sk = llm.image_signed_conf()
     if not (ak and sk):
-        raise ValueError("jimeng keys not configured")
+        raise ValueError("signed image API keys not configured")
     query = urllib.parse.urlencode({"Action": action, "Version": VERSION})
     payload = json.dumps(body)
     headers = _sign_v4(ak, sk, query, payload)
@@ -90,7 +95,7 @@ def _api(action: str, body: dict) -> dict:
     r.raise_for_status()
     result = json.loads(r.text.replace("\\u0026", "&"))
     if result.get("code") != 10000:
-        raise RuntimeError(f"jimeng {action}: {result.get('message')} (code={result.get('code')})")
+        raise RuntimeError(f"image_signed {action}: {result.get('message')} (code={result.get('code')})")
     return result
 
 
@@ -102,7 +107,7 @@ def _submit(prompt: str, width: int, height: int) -> str:
     })
     task_id = (result.get("data") or {}).get("task_id")
     if not task_id:
-        raise RuntimeError(f"jimeng no task_id: {result}")
+        raise RuntimeError(f"image_signed no task_id: {result}")
     return task_id
 
 
@@ -121,22 +126,22 @@ def _poll(task_id: str, timeout_s: int = _POLL_TIMEOUT_S) -> list[str]:
                 import base64
                 return [f"data:image/png;base64,{b64s[0]}"]
         if status in ("not_found", "expired"):
-            raise RuntimeError(f"jimeng task {status}")
+            raise RuntimeError(f"image_signed task {status}")
         time.sleep(_POLL_INTERVAL_S)
-    raise TimeoutError(f"jimeng task timeout after {timeout_s}s")
+    raise TimeoutError(f"image_signed task timeout after {timeout_s}s")
 
 
 def generate_image(prompt: str, ratio: str | None = None, timeout: int = 180) -> bytes | None:
     """生成图片，返回图片字节。失败返回 None（已记日志）。
 
-    ratio 默认取配置 jimeng_ratio（横屏 4:3）——生成的横图在 prepare_image
+    ratio 默认取配置 image_ratio（横屏 4:3）——生成的横图在 prepare_image
     时旋转 90°，相框横放观看即正立。
     """
     try:
-        ratio = ratio or settings.jimeng_ratio
+        ratio = ratio or llm.image_ratio()
         w, h = RATIOS.get(ratio, (1728, 1296))
         task_id = _submit(prompt, w, h)
-        logger.info("jimeng task submitted: %s", task_id)
+        logger.info("image_signed task submitted: %s", task_id)
         urls = _poll(task_id, timeout_s=timeout)
         url = urls[0]
         if url.startswith("data:"):
@@ -146,7 +151,7 @@ def generate_image(prompt: str, ratio: str | None = None, timeout: int = 180) ->
         r.raise_for_status()
         return r.content
     except Exception as exc:  # noqa: BLE001
-        logger.warning("jimeng generate failed: %s", exc)
+        logger.warning("image_signed generate failed: %s", exc)
         return None
 
 

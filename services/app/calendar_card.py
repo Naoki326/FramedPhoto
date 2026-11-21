@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw, ImageFont
 from lunar_python import Solar
 
 from app import calendar_facts
+from app import llm
 from app.calendar_facts import jieqi, lunar_day_label, solar_festival, lunar_festival
 from app.config import settings
 from app.epd_image import DEVICE_HEIGHT, DEVICE_WIDTH, SPECTRA6_PALETTE, find_cjk_font, prepare_image
@@ -117,8 +118,8 @@ FALLBACK_QUOTES = (
 
 
 def _quote_llm(today: dt.date, context: str) -> str | None:
-    """调智谱 GLM 生成今日家庭寄语（≤18 字）。无 key / 失败返回 None。"""
-    key = settings.zhipu_api_key
+    """调文本 LLM 生成今日家庭寄语（≤18 字）。无 key / 失败返回 None。"""
+    key = llm.text_key()
     if not key:
         return None
     recent = _quote_history()[-7:]
@@ -136,11 +137,12 @@ def _quote_llm(today: dt.date, context: str) -> str | None:
         "只返回 JSON。"
     )
     try:
+        url, model = llm.text_url_and_model()
         r = requests.post(
-            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            url,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={
-                "model": settings.zhipu_model,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -206,6 +208,7 @@ def daily_quote(today: dt.date | None = None, context: str = "") -> str:
         pass
     quote = _quote_llm(today, context) or _fallback_quote(today)
     try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps({"quote": quote}, ensure_ascii=False), encoding="utf-8")
     except OSError:
         pass

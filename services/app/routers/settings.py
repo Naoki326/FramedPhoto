@@ -10,7 +10,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app import category, runtime_config, slots
+from app import category, llm, runtime_config, slots
 from app.config import settings
 from app.free_module import default_modules, enabled_modules, pick_module
 
@@ -27,22 +27,22 @@ class SettingsBody(BaseModel):
     free_enabled: bool | None = None
     free_rotate: bool | None = None
     free_modules: list[dict[str, Any]] | None = None
-    qweather_city: str | None = None
-    qweather_location: str | None = None
+    weather_city: str | None = None
+    weather_location: str | None = None
     weather_style: str | None = Field(default=None, pattern=r"^(auto|apple|blue|magazine|classic)$")
 
 
-_QWEATHER_LOC_PATTERN = re.compile(
+_WEATHER_LOC_PATTERN = re.compile(
     r"^(?:\d{1,3}\.\d{1,3},\d{1,3}\.\d{1,3}|\d{3,9}|[A-Za-z]{2,10})$|^\d{6}$"
 )
 
 
 def _validate_location(loc: str) -> None:
-    """校验和风 location：经纬度 / 城市ID / 拼音（见 _QWEATHER_LOC_PATTERN）。非法则 400。"""
-    if not _QWEATHER_LOC_PATTERN.match(loc.strip()):
+    """校验天气 API location：经纬度 / 城市ID / 拼音（见 _WEATHER_LOC_PATTERN）。非法则 400。"""
+    if not _WEATHER_LOC_PATTERN.match(loc.strip()):
         raise HTTPException(
             status_code=400,
-            detail="和风 location 需为经纬度(如 121.49,31.40)、城市ID(如 101020300)或拼音(如 shanghai)",
+            detail="天气 location 需为经纬度(如 121.49,31.40)、城市ID(如 101020300)或拼音(如 shanghai)",
         )
 
 
@@ -63,8 +63,8 @@ async def get_settings():
             "free_enabled": runtime_config.effective("free_enabled", settings),
             "free_rotate": runtime_config.effective("free_rotate", settings),
             "free_modules": runtime_config.get("free_modules") or default_modules(),
-            "qweather_city": runtime_config.effective("qweather_city", settings),
-            "qweather_location": runtime_config.effective("qweather_location", settings),
+            "weather_city": runtime_config.effective("weather_city", settings),
+            "weather_location": runtime_config.effective("weather_location", settings),
             "weather_style": runtime_config.effective("weather_style", settings),
         },
         "categories": category.category_summary(),
@@ -72,10 +72,10 @@ async def get_settings():
         "status": {
             "ip_city": loc.get("city", ""),
             "current_slot": slots.current_slot(),
-            "weather_ready": bool(settings.qweather_key),
+            "weather_ready": bool(runtime_config.effective("weather_key", settings)),
             "weather_style_today": _today_style(),
             "free_today": today_mod["name"] if today_mod else "",
-            "free_llm_ready": bool(settings.zhipu_api_key),
+            "free_llm_ready": bool(llm.text_key()),
         },
     }
 
@@ -132,11 +132,11 @@ def save_settings(body: SettingsBody):
                 _validate_slot_categories(patch[k])
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-        elif k == "qweather_location":
+        elif k == "weather_location":
             _validate_location(v)
             patch[k] = v.strip()
             changed_weather = True
-        elif k == "qweather_city":
+        elif k == "weather_city":
             patch[k] = v.strip()
             changed_weather = True
         else:

@@ -58,18 +58,81 @@ ALLOWED_KEYS: dict[str, type] = {
     "free_enabled": bool,    # 自由模块时段开关
     "free_rotate": bool,     # 每天轮换启用中的自由模块（false=固定第一个）
     "free_modules": list,    # 自由模块列表 [{name, enabled, prompt, style}]
-    "qweather_city": str,    # 城市显示名（空 = IP 自动定位）
-    "qweather_location": str,  # 和风 location（空 = IP 自动定位）
+    "weather_city": str,      # 城市显示名（空 = IP 自动定位）
+    "weather_location": str,  # 天气 API location（空 = IP 自动定位）
     "daily_manual": dict,    # 手动指定今日精选 {path, date}
     "content_push": dict,    # 内容库推送图上屏 {id, date}（当日有效）
     "chroma_bias": float,    # 浓彩偏置 0..4：色域外高饱和色的墨水对混色向彩色端偏移（ADR-0004）
+
+    # ── AI / LLM 接入（管理台「AI 模型」页；密钥经 ai_secrets 掩码回显）──
+    # 照片分析 VLM
+    "vlm_enabled": bool,
+    "vlm_provider": str,       # auto | openai | anthropic | disabled
+    "vlm_api_mode": str,       # chat(chat/completions) | responses(/responses)
+    "vlm_api_url": str,
+    "vlm_api_key": str,
+    "vlm_model": str,
+    "vlm_timeout": int,
+    "vlm_proxy": str,
+    "anthropic_api_key": str,
+    "anthropic_model": str,
+    "anthropic_base_url": str,
+    # 文本 LLM（自由模块文案 / 日历寄语 / 天气卡片设计）—— 按接口形态配置，不绑厂家
+    "text_api": str,           # openai(chat/completions) | anthropic(/v1/messages)
+    "text_base_url": str,
+    "text_api_key": str,
+    "text_model": str,
+    # 文生图 —— provider 二选一，换厂家 = 换 provider + 地址 + 凭据
+    "image_api": str,          # openai | signed_async | cloudflare
+    "cloudflare_account_id": str,
+    "cloudflare_api_token": str,
+    "image_api_url": str,
+    "image_api_key": str,
+    "image_model": str,
+    "image_signed_ak": str,
+    "image_signed_sk": str,
+    "image_ratio": str,
+
+    # ── 天气与 NAS（同属「只能改 .env」的痛点，一并开放）──
+    "weather_key": str,
+    "weather_host": str,
+    "nas_ssh_host": str,
+    "nas_ssh_user": str,
+    "nas_ssh_port": int,
+    "nas_photo_dir": str,
+    "nas_rsync_path": str,
+    "nas_rsync_bwlimit": int,
 }
 
-# 旧键 → 新键别名（自由模块前身「新闻卡片」时段的历史 runtime_config.json）。
+#: 密钥类字段：管理台 GET 掩码回显、PUT 留空即不修改（见 ai_secrets）
+SECRET_KEYS: frozenset[str] = frozenset({
+    "vlm_api_key", "anthropic_api_key", "text_api_key",
+    "image_api_key", "image_signed_ak", "image_signed_sk",
+    "weather_key", "cloudflare_api_token",
+})
+
+# 旧键 → 新键别名（历史 runtime_config.json 的存量键）。
+# 两类：自由模块前身「新闻卡片」时段；以及 LLM/天气配置的厂商名键
+# （改名后按接口形态命名，换厂家不再动 schema）。
 # 读取顺序见 _lookup；旧键不经白名单保存（管理台只写新键）。
 ALIASES: dict[str, str] = {
     "slot_news": "slot_free",
     "slot_news_enabled": "slot_free_enabled",
+    # 文本 LLM（原智谱 GLM）
+    "zhipu_api_key": "text_api_key",
+    "zhipu_model": "text_model",
+    # 文生图（原即梦 + 通用图片接口两条键，现按接口形态统一）
+    "jimeng_access_key": "image_signed_ak",
+    "jimeng_secret_key": "image_signed_sk",
+    "jimeng_ratio": "image_ratio",
+    "imagegen_url": "image_api_url",
+    "imagegen_key": "image_api_key",
+    "imagegen_model": "image_model",
+    # 天气（原和风）
+    "qweather_key": "weather_key",
+    "qweather_host": "weather_host",
+    "qweather_city": "weather_city",
+    "qweather_location": "weather_location",
 }
 
 # 反查表：新键 → 旧键列表（按插入序作兜底顺序）
@@ -107,6 +170,11 @@ def _coerce(key: str, value):
     if typ is float:
         try:
             return float(value)
+        except (TypeError, ValueError):
+            return value
+    if typ is int:
+        try:
+            return int(value)
         except (TypeError, ValueError):
             return value
     return value

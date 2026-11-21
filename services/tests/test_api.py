@@ -466,7 +466,7 @@ def test_weather_settings_clear_removes_originals_too(monkeypatch):
     origs = list(wc.CACHE_DIR.glob("weather_*.png"))
     assert frames and origs
 
-    r = client.put("/api/settings", json={"qweather_city": "新城市"})
+    r = client.put("/api/settings", json={"weather_city": "新城市"})
     assert r.status_code == 200, r.text
     assert not list(wc.CACHE_DIR.glob("weather_*.fps6"))
     assert not list(wc.CACHE_DIR.glob("weather_*.png"))
@@ -478,7 +478,7 @@ def _mock_free_degrade(monkeypatch):
     """自由模块降级：LLM key 清空、文生图失败 → 纯文字卡片（无网络）。"""
     from app import free_module as fm
     from app.config import settings
-    monkeypatch.setattr(settings, "zhipu_api_key", "")
+    monkeypatch.setattr(settings, "text_api_key", "")
     monkeypatch.setattr(fm, "_generate_illustration", lambda prompt: None)
     monkeypatch.setattr(fm, "_cache_fps6", None)   # 防跨测试内存缓存泄漏
     monkeypatch.setattr(fm, "_cache_ts", 0)

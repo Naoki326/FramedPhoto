@@ -1,8 +1,8 @@
 """free_module.py — 自由模块卡片（替代原「新闻卡片」时段）。
 
 核心思路：管理台配置一段「模块 prompt」（如：宝宝背单词、读诗、历史故事、
-李白的诗和酒、童话故事……），由 LLM（智谱 GLM）根据该 prompt 生成当前时段
-具体内容（标题 / 正文 / 画面描述），即梦文生图出插画，PIL 叠加文字渲染成
+李白的诗和酒、童话故事……），由 LLM（见 app/llm.py 的文本 LLM 配置）根据该 prompt 生成当前时段
+具体内容（标题 / 正文 / 画面描述），文生图出插画，PIL 叠加文字渲染成
 FPS6 卡片。每个模块时段生成一次，时段内保持同一张卡（跨 0 点的连续同模块
 时段也不换图）；进入新的模块时段才重新生成。多个模块时可每天轮换。
 
@@ -26,12 +26,16 @@ import hashlib
 import io
 import json
 import logging
+import fcntl
+from functools import wraps
+from threading import RLock
 from pathlib import Path
 
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from app.config import settings
+from app import llm, story_rotation
 from app.epd_image import (
     DEVICE_HEIGHT,
     DEVICE_WIDTH,
@@ -46,6 +50,8 @@ logger = logging.getLogger(__name__)
 # 渲染缓存目录：config 公开设置（FREE_CACHE_DIR 可覆盖，默认与原私有路径一致）
 CACHE_DIR = Path(settings.free_cache_dir)
 CACHE_DIR.mkdir(exist_ok=True)
+
+# 自由模块 LLM / 文生图端点由 app.llm 统一解析（管理台可改，见 app/llm.py）
 
 # ═══════════════════════ 内置模块 ═══════════════════════
 
@@ -149,8 +155,6 @@ def pick_module(today: dt.date | None = None, module_name: str | None = None) ->
 
 # ═══════════════════════ LLM 生成当天内容 ═══════════════════════
 
-_LLM_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-
 _LLM_SYSTEM = (
     "你是电子纸相框的每日内容生成器。根据用户提供的「模块主题」，为今天生成一段"
     "适合展示在墨水屏上的内容。只输出 JSON，不要任何其他文字或解释。JSON 形如：\n"
@@ -159,7 +163,7 @@ _LLM_SYSTEM = (
     ' "image_prompt": "文生图画面描述（40-70 字，只描述画面，禁止出现任何文字、字母、水印）"}\n'
     "要求：\n"
     "- 内容每天不同：结合今天的日期、季节、节气随机挑选；\n"
-    "- 用户会给出「最近已展示过的内容」，必须从中避让，选择不同的新内容；\n"
+    "- 用户会给出「最近成功生成的内容」，必须从中避让，选择不同的新内容；\n"
     "- title 是核心内容（单词、诗名、故事名、新闻一句话等）；\n"
     "- body 是释义 / 诗句 / 故事梗概（背单词类可含英文单词+中文释义，诗类写诗句原文）；\n"
     "- image_prompt 只描述画面，绝不能包含任何文字、字母、数字、水印。"
@@ -169,11 +173,52 @@ _LLM_SYSTEM = (
 HISTORY_FILE = CACHE_DIR / "free_history.json"
 
 
+_generation_lock = RLock()
+
+
+def _serialized(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _generation_lock:
+            # POSIX advisory lock covers selection through saved-card commit.
+            HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with HISTORY_FILE.with_suffix('.lock').open('a') as lock_file:
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+                try:
+                    return function(*args, **kwargs)
+                except (story_rotation.HistoryError, OSError):
+                    logger.exception('free generation blocked by persistence failure')
+                    return None
+                finally:
+                    fcntl.flock(lock_file, fcntl.LOCK_UN)
+    return wrapped
+
+
+def _story_pool(module: dict) -> str | None:
+    # Exact theme match, not name match: preserve edited user requirements.
+    for index, pool in ((2, 'history'), (4, 'fairy')):
+        if module.get('prompt') == DEFAULT_MODULES[index]['prompt']:
+            return pool
+    return None
+
+
+def _story_content(story: dict, content: dict | None) -> dict:
+    # Identity checks cannot prove semantic fidelity. On mismatch use catalog
+    # text AND image template, never silently relabel another story.
+    valid = (isinstance(content, dict) and content.get('story_id') == story['id']
+             and content.get('title') == story['title']
+             and all(isinstance(content.get(k), str) and content[k].strip()
+                     for k in ('body', 'image_prompt')))
+    if not valid:
+        logger.warning('story contract mismatch/absent; catalog fallback: %s', story['id'])
+    return dict(story_id=story['id'], title=story['title'],
+                body=content['body'] if valid else story['synopsis'],
+                image_prompt=content['image_prompt'] if valid else
+                f"故事插画，无文字：{story['synopsis']}（{story['factuality']}）")
+
+
 def _load_history() -> dict:
-    try:
-        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
+    return story_rotation.load(HISTORY_FILE)
 
 
 def _record_title(module_name: str, title: str) -> None:
@@ -185,10 +230,9 @@ def _record_title(module_name: str, title: str) -> None:
         lst = h.setdefault(module_name, [])
         lst.append(title)
         h[module_name] = lst[-20:]
-        HISTORY_FILE.write_text(json.dumps(h, ensure_ascii=False, indent=1),
-                                encoding="utf-8")
-    except OSError:
-        pass
+        story_rotation.atomic_write(HISTORY_FILE, h)
+    except (OSError, story_rotation.HistoryError):
+        logger.exception('free title history write failed')
 
 
 def _recent_titles(module_name: str, n: int = 8) -> list[str]:
@@ -218,14 +262,14 @@ def _birthday_days(module: dict, today: dt.date) -> str | None:
 
 
 def _llm_content(module: dict, today: dt.date) -> dict | None:
-    """调智谱 GLM 生成当天内容 {title, body, image_prompt}。无 key/失败返回 None。"""
-    key = settings.zhipu_api_key
+    """调文本 LLM 生成当天内容 {title, body, image_prompt}。无 key/失败返回 None。"""
+    key = llm.text_key()
     if not key:
         return None
     recent = _recent_titles(module["name"])
     avoid = ""
     if recent:
-        avoid = (f"最近已展示过的内容（必须避让，选择不同的）："
+        avoid = (f"最近成功生成的内容（必须避让，选择不同的）："
                  f"{'、'.join(recent)}。\n")
     birthday = _birthday_days(module, today)
     birthday_line = birthday + "\n" if birthday else ""
@@ -235,12 +279,19 @@ def _llm_content(module: dict, today: dt.date) -> dict | None:
             f"{avoid}"
             f"插画风格：{module.get('style', '')}\n"
             "只输出 JSON。")
+    story = module.get('_selected_story')
+    if story:
+        user += ("\n已由程序锁定选题，不得另选故事。返回 JSON 必须额外包含 story_id，"
+                 "title 必须逐字一致。只能按给定梗概改写正文与画面，不增加人物、事件或史实；"
+                 "保留史书记述/传说/演义的不确定性标记。事实卡："
+                 + json.dumps(story, ensure_ascii=False))
     try:
+        url, model = llm.text_url_and_model()
         r = requests.post(
-            _LLM_URL,
+            url,
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
             json={
-                "model": settings.zhipu_model,
+                "model": model,
                 "messages": [
                     {"role": "system", "content": _LLM_SYSTEM},
                     {"role": "user", "content": user},
@@ -261,6 +312,8 @@ def _llm_content(module: dict, today: dt.date) -> dict | None:
             "body": str(data.get("body", "")).strip()[:60],
             "image_prompt": str(data.get("image_prompt", "")).strip()[:200],
         }
+        if story:
+            out['story_id'] = data.get('story_id')
         if not out["title"] and not out["body"]:
             return None
         return out
@@ -272,14 +325,15 @@ def _llm_content(module: dict, today: dt.date) -> dict | None:
 # ═══════════════════════ 文生图 ═══════════════════════
 
 def _generate_cartoon(prompt: str) -> bytes | None:
-    """通用 OpenAI 图片接口降级（未配即梦时）。返回 PNG 字节或 None。"""
-    if not (settings.imagegen_url and settings.imagegen_key and settings.imagegen_model):
+    """OpenAI 兼容图片接口。返回 PNG 字节或 None（未配置/失败）。"""
+    url, key, model = llm.image_conf()
+    if not (url and key and model):
         return None
     try:
         r = requests.post(
-            settings.imagegen_url,
-            headers={"Authorization": f"Bearer {settings.imagegen_key}"},
-            json={"model": settings.imagegen_model, "prompt": prompt,
+            url,
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": model, "prompt": prompt,
                   "n": 1, "size": "1536x1024", "response_format": "b64_json"},
             timeout=120,
         )
@@ -290,19 +344,32 @@ def _generate_cartoon(prompt: str) -> bytes | None:
             return None
         return base64.b64decode(b64)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("imagegen failed: %s", exc.__class__.__name__)
+        logger.warning("image api failed: %s", exc.__class__.__name__)
         return None
 
 
 def _generate_illustration(image_prompt: str) -> bytes | None:
-    """生成插画：优先即梦 4.6，其次通用图片接口。返回原始图片字节或 None。"""
-    from app.jimeng import generate_image
-    raw = generate_image(image_prompt)
+    """Cloudflare 独立调用，失败仅降级文字，绝不回退付费接口。
+
+    其它 provider 保留既有两条链路互相回退行为。
+    """
+    if llm.image_api() == llm.IMAGE_API_CLOUDFLARE:
+        from app.cloudflare_image import generate_image
+        return generate_image(image_prompt)
+    if llm.image_api() == llm.IMAGE_API_SIGNED_ASYNC:
+        first, second = _generate_signed, _generate_cartoon
+    else:
+        first, second = _generate_cartoon, _generate_signed
+    raw = first(image_prompt)
     if raw:
         return raw
-    if settings.imagegen_url:
-        return _generate_cartoon(image_prompt)
-    return None
+    return second(image_prompt)
+
+
+def _generate_signed(prompt: str) -> bytes | None:
+    """签名式异步任务接口（提交 + 轮询取图）。"""
+    from app.image_signed import generate_image
+    return generate_image(prompt)
 
 
 # ═══════════════════════ 渲染 ═══════════════════════
@@ -562,6 +629,7 @@ def _content_base(module_name: str | None) -> dt.datetime:
     return dt.datetime.combine(dt.date.today(), dt.time(0, 0))
 
 
+@_serialized
 def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> bytes | None:
     """渲染今日自由模块卡片 → FPS6 字节；未启用/不可用返回 None。
 
@@ -579,20 +647,35 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
     cache_key = f"{base:%Y%m%d%H%M}-{cache_file.name}"
     now = dt.datetime.now().timestamp()
 
-    if not refresh:
+    pool = _story_pool(module)
+    # Validate before either cache path. A crash between frame save and history
+    # commit leaves an untracked frame: ignore it and regenerate the same choice.
+    history = _load_history()
+    tracked = not pool or any(e['pool'] == pool and e['slot'] == cache_key
+                             for e in history.get(story_rotation.KEY, []))
+    if not refresh and tracked:
         # 内存缓存
         if _cache_fps6 and _cache_key == cache_key and (now - _cache_ts) < FREE_CACHE_TTL:
             return _cache_fps6
         # 文件缓存（服务重启后 12h 内复用）
-        if cache_file.exists() and (now - cache_file.stat().st_mtime) < FREE_CACHE_TTL:
+        if cache_file.exists() and (pool or (now - cache_file.stat().st_mtime) < FREE_CACHE_TTL):
             data = cache_file.read_bytes()
             _cache_fps6, _cache_ts, _cache_key = data, now, cache_key
             _cache_lib_id = _read_lib_id(cache_file)   # 帧与库 id 边车同生同灭
             return data
 
-    content = _llm_content(module, base.date())
-    if content and content.get("title"):
-        _record_title(module["name"], content["title"])
+    story = None
+    if pool:
+        try:
+            story = story_rotation.select(HISTORY_FILE, pool, module['name'], cache_key)
+        except story_rotation.HistoryError:
+            logger.exception('free story selection blocked')
+            return None
+    generation_module = dict(module, _selected_story=story) if story else module
+    content = _llm_content(generation_module, base.date())
+    if story:
+        content = _story_content(story, content)
+        content['image_prompt'] = f"{module.get('style', '')}，{content['image_prompt']}"
     title = (content or {}).get("title") or module["name"]
     body = (content or {}).get("body") or ""
     image_prompt = ((content or {}).get("image_prompt")
@@ -600,7 +683,7 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
 
     data = None
     lib_id: str | None = None   # 当前卡片落库的库 id（原图获取只认它，T4 #14）
-    # 生成 + 平铺自检；异常时重试一次（重新调即梦出图），仍异常走文字卡降级
+    # 生成 + 平铺自检；异常时重试一次（重新调文生图），仍异常走文字卡降级
     for attempt in range(2):
         raw = _generate_illustration(image_prompt)
         png = _compose_card(raw, module["name"], title, body) if raw else None
@@ -625,10 +708,20 @@ def render_free_fps6(refresh: bool = False, module_name: str | None = None) -> b
         return None
 
     try:
-        cache_file.write_bytes(data)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        pending = cache_file.with_suffix('.pending')
+        pending.write_bytes(data)
+        pending.replace(cache_file)
+        if story:
+            story_rotation.commit(HISTORY_FILE, pool, module['name'], cache_key, story)
+        elif content and content.get('title'):
+            _record_title(module['name'], content['title'])
         _write_lib_id(cache_file, lib_id)   # 库 id 随帧缓存一同落盘
-    except OSError:
-        pass
+    except (OSError, story_rotation.HistoryError):
+        logger.exception('free card/history persistence failed')
+        if story:
+            cache_file.unlink(missing_ok=True)
+            return None
     _cache_fps6, _cache_ts, _cache_key = data, now, cache_key
     _cache_lib_id = lib_id
     return data

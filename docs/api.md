@@ -55,7 +55,7 @@
 | GET | `/api/ota/versions` | 最新固件信息 |
 | GET | `/api/settings` | 当前生效配置（时段编排 / 天气 / 自由模块）+ 状态（IP 定位城市、当前时段、今日自由模块） |
 | PUT | `/api/settings` | 保存配置（即时生效，写入 `runtime_config.json`）；天气相关设置变化会自动清理天气缓存 |
-| GET | `/api/weather/lookup?location=宝山` | 中文城市名 → 和风 location 列表（管理台城市输入框保存时自动调用） |
+| GET | `/api/weather/lookup?location=宝山` | 中文城市名 → 天气 API location 列表（管理台城市输入框保存时自动调用） |
 | GET | `/api/calibration` | 校准状态（六色采样值 / 是否已校准 / 浓彩偏置 chroma_bias） |
 | POST | `/api/calibration/generate` | 生成校准图并直推设备（nibble 直写，绕过量化） |
 | GET | `/api/calibration/chart` | 校准图 PNG 预览（横放视角） |
@@ -72,10 +72,28 @@
 | DELETE | `/api/analysis/folders/{name}` | 删除空文件夹（NAS rmdir + 本地，连带清理残留评分记录与时段绑定）；非空 409 |
 | POST | `/api/sync/start` | 手动触发一次 NAS → 本地增量同步（后台运行） |
 | GET | `/api/sync/status` | 同步进度（running/done/error/stale/idle） |
+| GET | `/api/ai` | AI 接入配置（生效值 + 密钥掩码 `sk-1…cd34` 与 `*_set` 就绪位）+ 各组状态（`vlm_ready`/`text_ready`/`image_ready`/`weather_ready`/`nas_ready`） |
+| PUT | `/api/ai` | 保存 AI 接入配置（写入 `runtime_config.json`，即时生效）。密钥字段：留空或回传掩码 = 保持原值，`"-"` = 置空（不回退 `.env`）；天气 key/host 变化自动清天气缓存 |
+| POST | `/api/ai/test` | 连通性测试 `{"target": "vlm"\|"text"\|"image"}`：前两者发真实最小请求，`image` 只检查链路就绪性（不实际出图，按次计费） |
+| GET | `/api/ai/calendar-quote?force=false` | 当日家庭寄语（`force=true` 忽略缓存重生成，供 AI 页调试） |
+
+### AI 接入配置（管理台「AI 模型」页）
+
+LLM 与文生图接入按**接口形态**配置，不绑定厂家（换厂家 = 换地址与 key）：
+
+| 配置面 | provider | 字段 |
+| --- | --- | --- |
+| 照片分析 VLM | `auto` / `openai`（含 `chat`、`responses` 两种端点） / `anthropic` / `disabled` | `vlm_api_url` `vlm_api_key` `vlm_model` `vlm_timeout` `vlm_proxy`，以及 `anthropic_*` |
+| 文本 LLM | `openai`（chat/completions） / `anthropic`（/v1/messages） | `text_base_url` `text_api_key` `text_model` |
+| 文生图 | `openai` / `signed_async` / `cloudflare`（Workers AI FLUX.1 schnell） | 前两者配置不变；Cloudflare 使用 `cloudflare_account_id`（32 位十六进制）及 `cloudflare_api_token`（密钥掩码）；Cloudflare 使用模型默认尺寸，忽略 `image_ratio`。`cloudflare_ready` 仅表示配置齐全，不代表远端鉴权或额度通过；Cloudflare 失败不回退其他生图接口 |
+
+读取优先级统一为 `runtime_config.json` > `services/.env` > 默认值，保存即时生效，无需重启。签名式接口的端点/区域/请求 Action 由适配层 `app/image_signed.py` 持有，换厂家只改该文件的模块常量。
+
+**旧厂商名键兼容**：`ZHIPU_*` / `JIMENG_*` / `IMAGEGEN_*` / `QWEATHER_*` 仍能读到（新键优先，`.env` 与历史 `runtime_config.json` 都支持），因此改名不影响已有部署。
 
 ### 天气城市设置
 
-管理台「城市」输入框保存时，中文城市名会自动解析为和风 location（城市 ID / 经纬度），也支持直接填城市 ID、经纬度或拼音。解析逻辑：前端内置常用城市表 → `/api/weather/lookup`（GeoAPI + 常见城市兜底）。保存后天气卡片按新城市渲染（缓存文件名带 location 指纹，改城市立即失效）。留空则回退 IP 自动定位。
+管理台「城市」输入框保存时，中文城市名会自动解析为天气 API location（城市 ID / 经纬度），也支持直接填城市 ID、经纬度或拼音。解析逻辑：前端内置常用城市表 → `/api/weather/lookup`（GeoAPI + 常见城市兜底）。保存后天气卡片按新城市渲染（缓存文件名带 location 指纹，改城市立即失效）。留空则回退 IP 自动定位。
 
 ## 数据存储
 

@@ -91,6 +91,7 @@
     <button class="tab" data-tab="photolib">照片库</button>
     <button class="tab" data-tab="library">内容库</button>
     <button class="tab" data-tab="sync">同步</button>
+    <button class="tab" data-tab="ai">🧠 AI</button>
     <button class="tab" data-tab="settings">设置</button>
   </nav>
 </header>
@@ -111,7 +112,7 @@
           </div>
           <div style="margin-top:10px">
             <button onclick="refreshFree()" id="freeRefreshBtn" style="background:#7c3aed">✨ 重新生成今日自由模块</button>
-            <span style="font-size:12px;color:#9ca3af;margin-left:8px">跳过缓存，LLM + 即梦重新出图（约 1-2 分钟）</span>
+            <span style="font-size:12px;color:#9ca3af;margin-left:8px">跳过缓存，LLM + 文生图重新出图（约 1-2 分钟）</span>
           </div>
           <p style="color:#9ca3af;font-size:12px;margin:8px 0">
             上传后设备下次刷新即显示这张图；<b>不保存到照片库</b>，可随时上传替换，或恢复时段自动内容。
@@ -191,6 +192,212 @@
     </section>
   </div>
 
+  <!-- ═══════════ AI 模型 ═══════════ -->
+  <div class="panel" id="panel-ai" style="display:none">
+    <section>
+      <h2>🧠 AI 模型与接入配置</h2>
+      <div id="aiStatus" style="font-size:12px;color:#6b7280;margin-bottom:12px">加载中…</div>
+      <p style="font-size:12px;color:#6b7280;line-height:1.8;margin:0 0 12px">
+          这里改的值存在服务端 <code>runtime_config.json</code>，<b>保存后即时生效</b>，无需重启。
+          <b>配置项按接口形态描述</b>（OpenAI 兼容 / Anthropic 兼容 / 签名式异步），换厂家只换地址与 key。
+          <b>密钥只显示掩码</b>（如 <code>sk-sU1…MeO7</code>）：不编辑就保持原值，
+          想置空请输入单个 <code>-</code>。留空的字段回退到 <code>services/.env</code>。
+      </p>
+
+      <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px">
+        <b style="font-size:13px">👁 照片分析 VLM（回忆度 / 美观度 / 文案）</b>
+        <div id="aiVlmStatus" style="font-size:12px;color:#6b7280;margin:4px 0 8px"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;align-items:center">
+          <label><input type="checkbox" id="aiVlmEnabled"> 启用 AI 分析（关闭 = 纯启发式评分）</label>
+          <label>提供方 <select id="aiVlmProvider" style="padding:5px">
+            <option value="auto">auto（有 Claude key 优先）</option>
+            <option value="openai">openai（兼容接口）</option>
+            <option value="anthropic">anthropic（Claude）</option>
+            <option value="disabled">disabled（关闭）</option>
+          </select></label>
+          <label>接口类型 <select id="aiVlmMode" style="padding:5px">
+            <option value="chat">chat（/chat/completions）</option>
+            <option value="responses">responses（/v1/responses）</option>
+          </select></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:13px">
+          <label style="flex:1;min-width:280px">API URL
+            <input type="text" id="aiVlmUrl" placeholder="https://…/v1/chat/completions 或 base URL"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:200px">模型
+            <input type="text" id="aiVlmModel" placeholder="qwen3.8-max"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:13px">
+          <label style="flex:1;min-width:240px">API Key <span id="aiVlmKeySet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiVlmKey" placeholder="留空不改；填 - 清空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:0 0 110px">超时（秒）
+            <input type="number" id="aiVlmTimeout" min="1"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:220px">HTTP 代理
+            <input type="text" id="aiVlmProxy" placeholder="http://127.0.0.1:7897（不用则留空）"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:13px">
+          <label style="flex:1;min-width:240px">Anthropic Key <span id="aiAnthKeySet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiAnthKey" placeholder="留空不改；填 - 清空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:200px">Claude 模型
+            <input type="text" id="aiAnthModel"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:200px">Claude base URL
+            <input type="text" id="aiAnthBase"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="margin-top:8px">
+          <button onclick="testAi('vlm')" style="background:#f3f4f6;color:#374151">🔌 测试连接</button>
+          <span id="aiVlmTest" style="font-size:12px;margin-left:8px;color:#6b7280"></span>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px">
+        <b style="font-size:13px">✍ 文本 LLM（自由模块文案 / 日历寄语 / 天气卡片设计）</b>
+        <div id="aiLlmStatus" style="font-size:12px;color:#6b7280;margin:4px 0 8px"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;align-items:center">
+          <label>接口类型 <select id="aiTextApi" style="padding:5px">
+            <option value="openai">OpenAI 兼容（/chat/completions）</option>
+            <option value="anthropic">Anthropic 兼容（/v1/messages）</option>
+          </select></label>
+          <label style="flex:1;min-width:280px">接口地址（base URL）
+            <input type="text" id="aiTextBase" placeholder="https://…/v1 或 …/v1/chat/completions"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:180px">模型
+            <input type="text" id="aiTextModel" placeholder="模型名"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:1;min-width:240px">API Key <span id="aiTextKeySet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiTextKey" placeholder="留空不改；填 - 置空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:6px;line-height:1.7">
+          换厂家只改接口地址与 key，配置项不变。未配置时各自降级：自由模块出纯插画、
+          日历寄语用内置语料、天气卡片用默认设计。
+        </div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <button onclick="testAi('text')" style="background:#f3f4f6;color:#374151">🔌 测试连接</button>
+          <button onclick="genQuote()" style="background:#f3f4f6;color:#374151">🎲 重新生成今日寄语</button>
+          <span id="aiLlmTest" style="font-size:12px;color:#6b7280"></span>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px">
+        <b style="font-size:13px">🎨 文生图（自由模块插画）</b>
+        <div id="aiImgStatus" style="font-size:12px;color:#6b7280;margin:4px 0 8px"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;align-items:center">
+          <label>接口类型 <select id="aiImageApi" onchange="aiImageApiToggle()" style="padding:5px">
+            <option value="openai">OpenAI 兼容图片接口</option>
+            <option value="signed_async">签名式异步任务接口</option>
+            <option value="cloudflare">Cloudflare Workers AI（FLUX.1 schnell）</option>
+          </select></label>
+          <label style="flex:0 0 130px">出图比例
+            <select id="aiGenRatio" style="width:100%;padding:6px">
+              <option value="4:3">4:3 横屏（推荐）</option>
+              <option value="16:9">16:9 横屏</option>
+              <option value="3:4">3:4 竖屏</option>
+              <option value="9:16">9:16 竖屏</option>
+            </select></label>
+        </div>
+        <div id="aiImageOpenaiFields" style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:1;min-width:240px">图片接口 URL
+            <input type="text" id="aiGenUrl" placeholder="https://…/v1/images/generations"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:170px">模型
+            <input type="text" id="aiGenModel"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:220px">API Key <span id="aiGenKeySet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiGenKey" placeholder="留空不改；填 - 置空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div id="aiImageSignedFields" style="flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:1;min-width:240px">Access Key <span id="aiSignedAkSet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiSignedAk" placeholder="留空不改；填 - 置空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:240px">Secret Key <span id="aiSignedSkSet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiSignedSk" placeholder="留空不改；填 - 置空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <div style="flex-basis:100%;font-size:12px;color:#9ca3af;line-height:1.7">
+            签名式接口的端点、区域与请求 Action 由服务端适配层持有（<code>app/image_signed.py</code>）：
+            换签名式厂家改那一处常量，本页只需填 AK/SK。
+          </div>
+        </div>
+        <div id="aiImageCloudflareFields" style="display:none;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:1;min-width:240px">Cloudflare Account ID
+            <input type="text" id="aiCloudflareAccount" placeholder="32 位十六进制账户 ID" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:240px">Cloudflare API token <span id="aiCloudflareTokenSet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="password" id="aiCloudflareToken" placeholder="留空不改；填 - 置空" autocomplete="new-password"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <div style="flex-basis:100%;font-size:12px;color:#6b7280;line-height:1.7">
+            固定使用 FLUX.1 schnell 的默认尺寸（比例选项不生效），相框按原流程裁剪适配；无需填写接口 URL 或模型。
+            免费额度与账户其他 Workers AI 用量共享，
+            不是无限免费，请在 Cloudflare 控制台保持免费计划并查看用量。「检查链路」只检查本地配置，
+            不验证远端权限、不实际生图。保存后可在「当前显示 → 重新生成今日自由模块」测试
+            （消耗额度并更新卡片，不是隔离预览）。
+          </div>
+        </div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:8px;line-height:1.7">
+          Cloudflare 失败只降级文字卡片，不回退其他付费接口；OpenAI 与签名式接口仍互为失败回退。
+        </div>
+        <div style="margin-top:8px">
+          <button onclick="testAi('image')" style="background:#f3f4f6;color:#374151">🔌 检查链路</button>
+          <span id="aiImgTest" style="font-size:12px;margin-left:8px;color:#6b7280"></span>
+        </div>
+      </div>
+
+      <div style="padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+        <b style="font-size:13px">🌦 天气与 🗄 NAS 接入</b>
+        <div id="aiInfraStatus" style="font-size:12px;color:#6b7280;margin:4px 0 8px"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px">
+          <label style="flex:1;min-width:240px">天气 API Key <span id="aiQwKeySet" style="color:#9ca3af;font-size:11px"></span>
+            <input type="text" id="aiQwKey" placeholder="留空不改；填 - 置空" autocomplete="off"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:240px">天气 API Host
+            <input type="text" id="aiQwHost" placeholder="devapi.qweather.com 或专属 xxx.re.qweatherapi.com"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:2;min-width:220px">NAS 主机（SSH 别名 / IPv6 / 域名）
+            <input type="text" id="aiNasHost" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:1;min-width:130px">SSH 用户
+            <input type="text" id="aiNasUser" style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:0 0 90px">端口
+            <input type="number" id="aiNasPort" min="1" max="65535"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:2;min-width:200px">NAS 照片目录
+            <input type="text" id="aiNasPhotoDir" placeholder="/volume1/photo"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:13px;margin-top:8px">
+          <label style="flex:2;min-width:200px">NAS rsync 路径
+            <input type="text" id="aiNasRsync" placeholder="/usr/local/bin/rsync（群晖需指向 synocli-net）"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+          <label style="flex:0 0 150px">限速（KB/s，0=不限）
+            <input type="number" id="aiNasBw" min="0"
+                   style="width:100%;padding:6px;border:1px solid #d1d5db;border-radius:6px"></label>
+        </div>
+        <div style="font-size:12px;color:#9ca3af;margin-top:8px;line-height:1.7">
+          NAS 主机/用户/目录/rsync 路径与限速需重启服务后生效：<code>sync_nas.sh</code> 从
+          <code>services/.env</code> 读这些值，不读本页配置。
+          <b>改完请同步手动抄一份到 .env</b>，否则定时同步会与本页配置不一致。
+        </div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <button onclick="saveAiConfig()" id="aiSaveBtn">保存 AI 配置（即时生效）</button>
+        <button onclick="loadAiConfig()" style="background:#f3f4f6;color:#374151">重新载入</button>
+        <span id="aiMsg" style="color:#16a34a;font-size:12px"></span>
+      </div>
+      <div id="aiQuote" style="font-size:12px;color:#6b7280;margin-top:8px"></div>
+    </section>
+  </div>
+
   <!-- ═══════════ 设置 ═══════════ -->
   <div class="panel" id="panel-settings" style="display:none">
     <section>
@@ -224,7 +431,7 @@
           <span id="sFreeToday" style="color:#9ca3af;font-size:12px"></span>
           <p style="font-size:12px;color:#6b7280;margin:6px 0 10px;line-height:1.7">
             每个模块配一段 <b>prompt</b>，描述想看什么内容；每天由 LLM 根据它生成当天内容
-            （标题 / 正文 / 画面描述），即梦画插画并在屏幕上叠加文字，所以
+            （标题 / 正文 / 画面描述），文生图出插画并在屏幕上叠加文字，所以
             <b>宝宝背单词、读诗、历史故事、童话故事、新闻……</b>都可以。
             开启「每日轮换」则每天换一个启用的模块；同一模块每天内容也不同。
             <b>在上面时序条里排入「✨ 自由模块」时段</b>即可上屏。
@@ -238,7 +445,7 @@
         <div>🌆 城市：<input type="text" id="sCity" placeholder="如：上海宝山 / 宝山 / 北京市" style="width:180px;padding:6px;border:1px solid #d1d5db;border-radius:6px">
           <span id="sCityTip" style="font-size:12px;color:#9ca3af"></span></div>
         <div style="font-size:12px;color:#6b7280;margin-top:2px;line-height:1.8">
-          支持直接输入中文城市名（<b>会自动查和风城市库</b>）或填城市 ID（如 <code>101020300</code>）。
+          支持直接输入中文城市名（<b>会自动查天气城市库</b>）或填城市 ID（如 <code>101020300</code>）。
           <span id="sIpCity" style="color:#9ca3af"></span>
         </div>
         <div style="margin-top:10px"><button onclick="saveSettings()">保存设置（即时生效）</button>
@@ -886,6 +1093,137 @@ async function uploadFw() {
   btn.disabled = false;
 }
 
+/* ---- AI 模型与接入配置 ---- */
+const AI_FIELDS = {           // 表单 id → API 字段（非密钥，空串照传）
+  aiVlmProvider: 'vlm_provider', aiVlmMode: 'vlm_api_mode',
+  aiVlmUrl: 'vlm_api_url', aiVlmModel: 'vlm_model', aiVlmProxy: 'vlm_proxy',
+  aiVlmTimeout: 'vlm_timeout', aiAnthModel: 'anthropic_model', aiAnthBase: 'anthropic_base_url',
+  aiTextApi: 'text_api', aiTextBase: 'text_base_url', aiTextModel: 'text_model',
+  aiImageApi: 'image_api', aiGenRatio: 'image_ratio',
+  aiGenUrl: 'image_api_url', aiGenModel: 'image_model',
+  aiCloudflareAccount: 'cloudflare_account_id',
+  aiQwHost: 'weather_host', aiNasHost: 'nas_ssh_host', aiNasUser: 'nas_ssh_user',
+  aiNasPort: 'nas_ssh_port', aiNasPhotoDir: 'nas_photo_dir',
+  aiNasRsync: 'nas_rsync_path', aiNasBw: 'nas_rsync_bwlimit',
+};
+const AI_SECRETS = {          // 密钥字段：空串不提交（= 保持原值），"-" = 置空
+  aiVlmKey: 'vlm_api_key', aiAnthKey: 'anthropic_api_key', aiTextKey: 'text_api_key',
+  aiGenKey: 'image_api_key', aiSignedAk: 'image_signed_ak', aiSignedSk: 'image_signed_sk',
+  aiQwKey: 'weather_key', aiCloudflareToken: 'cloudflare_api_token',
+};
+const AI_READY_LABELS = {
+  vlm_ready: 'VLM 照片分析', text_ready: '文本 LLM', image_ready: '文生图',
+  weather_ready: '天气', nas_ready: 'NAS 同步',
+};
+
+function _aiSet(el, value) { if (el) el.value = value === undefined || value === null ? '' : String(value); }
+
+/** 就绪状态条：各组一个 ✅/⬜ 徽标（未配置的组灰掉，一眼看出缺什么）。 */
+function aiStatusHtml(st) {
+  const badges = Object.keys(AI_READY_LABELS).map(k => {
+    const on = !!st[k];
+    return `<span style="display:inline-block;margin-right:12px;${on ? 'color:#16a34a' : 'color:#9ca3af'}">`
+      + `${on ? '✅' : '⬜'} ${AI_READY_LABELS[k]}</span>`;
+  }).join('');
+  const vlmNote = st.vlm_ready
+    ? `<span style="color:#16a34a">当前会真实调用 VLM（provider=${st.vlm_provider}）</span>`
+    : (st.vlm_disabled ? '<span style="color:#d97706">VLM 已关闭，照片走启发式评分</span>'
+                       : '<span style="color:#d97706">VLM 未就绪，照片会降级启发式评分</span>');
+  return badges + '<br><span style="display:inline-block;margin-top:6px">' + vlmNote + '</span>';
+}
+
+/** 掩码提示：告诉用户「已配置」而非让他看到明文；未配置时提示留空 = 不变。 */
+function aiMaskHint(id, masked, set) {
+  if (id) id.textContent = set ? `已配置：${masked}` : '未配置';
+}
+
+async function loadAiConfig() {
+  try {
+    const d = await api('/ai');
+    const c = d.config || {};
+    for (const [elId, key] of Object.entries(AI_FIELDS)) _aiSet($(elId), c[key]);
+    $('aiVlmEnabled').checked = !!c.vlm_enabled;
+    // 密钥输入框总是留空：用户不动它就提交不上去（= 保持原值）
+    for (const elId of Object.keys(AI_SECRETS)) _aiSet($(elId), '');
+    aiMaskHint($('aiVlmKeySet'), c.vlm_api_key, c.vlm_api_key_set);
+    aiMaskHint($('aiAnthKeySet'), c.anthropic_api_key, c.anthropic_api_key_set);
+    aiMaskHint($('aiTextKeySet'), c.text_api_key, c.text_api_key_set);
+    aiMaskHint($('aiGenKeySet'), c.image_api_key, c.image_api_key_set);
+    aiMaskHint($('aiCloudflareTokenSet'), c.cloudflare_api_token, c.cloudflare_api_token_set);
+    aiMaskHint($('aiSignedAkSet'), c.image_signed_ak, c.image_signed_ak_set);
+    aiMaskHint($('aiSignedSkSet'), c.image_signed_sk, c.image_signed_sk_set);
+    aiMaskHint($('aiQwKeySet'), c.weather_key, c.weather_key_set);
+    aiImageApiToggle();
+    const st = d.status || {};
+    $('aiStatus').innerHTML = aiStatusHtml(st);
+    $('aiVlmStatus').textContent = st.vlm_ready ? '端点已就绪，可点测试连接' : '未就绪：provider / api_url / api_key 至少缺一项';
+    $('aiLlmStatus').textContent = st.text_ready
+      ? `已配置：${st.text_api === 'anthropic' ? 'Anthropic 兼容' : 'OpenAI 兼容'} · ${st.text_model}`
+      : '未配置：自由模块出纯插画，日历寄语走内置语料';
+    $('aiImgStatus').textContent = st.image_ready
+      ? `${st.image_api === 'cloudflare' ? 'Cloudflare FLUX.1 schnell' : st.image_api === 'signed_async' ? '签名式异步接口' : 'OpenAI 兼容图片接口'}已配置（${st.image_api === 'cloudflare' ? '模型默认尺寸' : '比例 ' + st.image_ratio}；未验证远端权限或额度）`
+      : '当前生图配置未就绪：自由模块只出文字卡片';
+    $('aiInfraStatus').textContent = (st.weather_ready ? '天气 API 已配置' : '天气 API 未配置：天气时段会回退照片')
+      + ' · ' + (st.nas_ready ? 'NAS 已配置' : 'NAS 未配置：同步与文件夹管理不可用');
+  } catch (e) { $('aiStatus').textContent = '载入失败: ' + e.message; }
+}
+
+async function saveAiConfig() {
+  const body = { vlm_enabled: $('aiVlmEnabled').checked };
+  for (const [elId, key] of Object.entries(AI_FIELDS)) {
+    const raw = $(elId).value;
+    // 数值字段：空串会让 pydantic 报错，统一转成 null（= 不改）
+    if ($(elId).type === 'number') body[key] = raw.trim() === '' ? null : Number(raw);
+    else body[key] = raw;
+  }
+  for (const [elId, key] of Object.entries(AI_SECRETS)) {
+    const raw = $(elId).value.trim();
+    if (raw) body[key] = raw;   // 空 = 不提交 = 保持原值；"-" = 清空
+  }
+  const btn = $('aiSaveBtn');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/ai', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    toast('AI 配置已保存，即时生效');
+    $('aiMsg').textContent = '已保存，立即生效';
+    setTimeout(() => $('aiMsg').textContent = '', 2500);
+    loadAiConfig(); loadSettings();
+  } catch (e) { alert('保存失败: ' + e.message); }
+  if (btn) btn.disabled = false;
+}
+
+async function testAi(target) {
+  const out = { vlm: 'aiVlmTest', llm: 'aiLlmTest', image: 'aiImgTest' }[target];
+  const el = $(out);
+  el.textContent = '测试中…';
+  try {
+    const r = await api('/ai/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
+    el.innerHTML = (r.ok ? '<span style="color:#16a34a">✅ </span>' : '<span style="color:#dc2626">❌ </span>')
+      + escHtml(r.detail) + (r.sample ? ` ｜ 示例：${escHtml(r.sample)}` : '')
+      + (r.elapsed_ms ? ` (${r.elapsed_ms}ms)` : '');
+  } catch (e) { el.innerHTML = '<span style="color:#dc2626">❌ </span>' + escHtml(e.message); }
+}
+
+async function genQuote() {
+  const el = $('aiQuote');
+  el.textContent = '生成中…';
+  try {
+    const r = await api('/ai/calendar-quote?force=true');
+    el.innerHTML = `今日寄语：<b>${escHtml(r.quote)}</b>（${escHtml(r.model)}${r.llm_ready ? '' : ' · 未配置 key，为内置语料'}）`;
+  } catch (e) { el.textContent = '生成失败: ' + e.message; }
+}
+
+/** 文生图 provider 切换：只显示当前链路需要的字段（避免让人填无效项）。 */
+function aiImageApiToggle() {
+  const provider = $('aiImageApi').value;
+  $('aiGenRatio').disabled = provider === 'cloudflare';
+  const openaiBox = $('aiImageOpenaiFields'), signedBox = $('aiImageSignedFields');
+  const cloudflareBox = $('aiImageCloudflareFields');
+  if (openaiBox) openaiBox.style.display = provider === 'openai' ? 'flex' : 'none';
+  if (signedBox) signedBox.style.display = provider === 'signed_async' ? 'flex' : 'none';
+  if (cloudflareBox) cloudflareBox.style.display = provider === 'cloudflare' ? 'flex' : 'none';
+}
+
 /* ---- 时段编排与设置 ---- */
 let freeModules = [];
 let photoCategories = [];   // [{name, count}] 供照片时段分类下拉（留空 = 全库）
@@ -1154,32 +1492,32 @@ async function loadSettings() {
     $('sFreeRotate').checked = !!s.config.free_rotate;
     $('sStyle').value = s.config.weather_style || 'auto';
     $('sStyleToday').textContent = s.status.weather_style_today ? `（今日：${s.status.weather_style_today}）` : '';
-    $('sWeatherNote').textContent = s.status.weather_ready ? '' : '（未配置和风天气 key，天气时段将回退显示照片）';
-    $('sCity').value = s.config.qweather_city || '';
+    $('sWeatherNote').textContent = s.status.weather_ready ? '' : '（未配置天气 API key，天气时段将回退显示照片）';
+    $('sCity').value = s.config.weather_city || '';
     $('sIpCity').textContent = s.status.ip_city ? `IP 定位：${s.status.ip_city}` : '';
-    $('sCityTip').textContent = s.config.qweather_location
-      ? `已定位：${s.config.qweather_location}（${s.config.qweather_city || '默认城市'}）`
-      : (s.config.qweather_city
+    $('sCityTip').textContent = s.config.weather_location
+      ? `已定位：${s.config.weather_location}（${s.config.weather_city || '默认城市'}）`
+      : (s.config.weather_city
         ? '已保存城市名（未解析到 ID，天气将按名称查询）'
         : '留空 = 自动 IP 定位；输入城市名或 ID 后保存即按该城市取天气');
     photoCategories = (s.categories || []);
     freeModules = (s.config.free_modules || []).map(m => ({ name: m.name || '', enabled: !!m.enabled, prompt: m.prompt || '', style: m.style || '' }));
     renderFreeModules();
-    $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置智谱 key，仅纯插画/文字' }）` : '';
+    $('sFreeToday').textContent = s.status.free_today ? `（今日：${s.status.free_today}${s.status.free_llm_ready ? '' : ' · 未配置文本 LLM key，仅纯插画/文字' }）` : '';
     loadCalibration();
   } catch (_) {}
 }
 async function saveSettings() {
   try {
     const city = $('sCity').value.trim();
-    let qweather_location = null;
+    let weather_location = null;
     if (city) {
       if (/^\d{1,3}\.\d{1,3},\d{1,3}\.\d{1,3}$/.test(city) || /^\d{3,9}$/.test(city) || /^[A-Za-z]{2,10}$/.test(city)) {
         // 已是经纬度 / 城市 ID / 拼音，直接用作 location
-        qweather_location = city;
+        weather_location = city;
       } else {
-        // 中文城市名 → 和风城市库自动解析（resolveCityToLocation，失败会抛错提示）
-        qweather_location = await resolveCityToLocation(city);
+        // 中文城市名 → 天气城市库自动解析（resolveCityToLocation，失败会抛错提示）
+        weather_location = await resolveCityToLocation(city);
       }
     }
     const r = await api('/settings', {
@@ -1191,8 +1529,8 @@ async function saveSettings() {
           ...(s.category ? { category: s.category } : {}) })),
         free_rotate: $('sFreeRotate').checked,
         free_modules: freeModules.filter(m => m.name.trim()),
-        qweather_city: city,
-        qweather_location,
+        weather_city: city,
+        weather_location,
         weather_style: $('sStyle').value,
       }),
     });
@@ -1506,6 +1844,7 @@ async function saveWifiConfig() {
 $('scoresSort') && $('scoresSort').addEventListener('change', () => loadScores());
 loadHealth(); refreshFolders().then(() => loadScores()); loadDisplay(); loadSync(); loadDaily(); loadManualPick(); loadImages(); loadDevices(); loadFw();
 loadSettings();
+loadAiConfig();
 setInterval(loadDevices, 15000);
 setInterval(loadDisplay, 60000);
 setInterval(loadDaily, 600000);

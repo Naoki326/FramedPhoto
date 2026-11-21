@@ -24,6 +24,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from app.config import settings
+from app.runtime_config import effective
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +35,8 @@ def _service_path(value: str) -> Path:
 
 
 def configured() -> bool:
-    return bool(settings.nas_ssh_host and settings.nas_ssh_user and settings.nas_photo_dir)
+    return bool(effective("nas_ssh_host", settings) and effective("nas_ssh_user", settings)
+                and nas_photo_dir())
 
 
 def require_configured() -> None:
@@ -43,23 +45,23 @@ def require_configured() -> None:
 
 
 def _host() -> str:
-    host = settings.nas_ssh_host.strip()
+    host = str(effective("nas_ssh_host", settings) or "").strip()
     if ":" in host and not host.startswith("["):
         return f"[{host}]"
     return host
 
 
 def _target() -> str:
-    return f"{settings.nas_ssh_user}@{_host()}"
+    return f"{effective('nas_ssh_user', settings)}@{_host()}"
 
 
 def nas_photo_dir() -> str:
-    return settings.nas_photo_dir.rstrip("/")
+    return str(effective("nas_photo_dir", settings) or "").rstrip("/")
 
 
 def _ssh_base() -> list[str]:
     return [
-        "ssh", "-p", str(settings.nas_ssh_port),
+        "ssh", "-p", str(int(effective("nas_ssh_port", settings) or 22)),
         "-o", "ConnectTimeout=15",
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=4",
@@ -180,10 +182,11 @@ def push_frame_dir(folder: str | None) -> dict:
         # 根目录：只推散照（排除所有子文件夹），不递归触碰已同步的分类
         args.append("--exclude=*/")
         remote_dir = nas_photo_dir()
-    if settings.nas_rsync_bwlimit > 0:
-        args.append(f"--bwlimit={settings.nas_rsync_bwlimit}")
-    if settings.nas_rsync_path:
-        args.append(f"--rsync-path={settings.nas_rsync_path}")
+    if int(effective("nas_rsync_bwlimit", settings) or 0) > 0:
+        args.append(f"--bwlimit={int(effective('nas_rsync_bwlimit', settings))}")
+    rsync_path = str(effective("nas_rsync_path", settings) or "")
+    if rsync_path:
+        args.append(f"--rsync-path={rsync_path}")
     args.extend([f"{src}/", f"{_target()}:{remote_dir}/"])
     _run(args, timeout=3600)
     return {"ok": True, "folder": folder or "", "remote_dir": remote_dir}

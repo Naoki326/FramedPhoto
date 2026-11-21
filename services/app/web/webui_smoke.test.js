@@ -138,7 +138,7 @@ const SETTINGS = {
   config: {
     slot_segments: [{ start: '00:00', type: 'weather' }],
     free_rotate: false, weather_style: 'auto',
-    qweather_city: '', qweather_location: null, free_modules: [],
+    weather_city: '', weather_location: null, free_modules: [],
   },
   status: { weather_style_today: '', weather_ready: true, ip_city: '', free_today: '', free_llm_ready: true },
 };
@@ -168,9 +168,38 @@ function bootRoutes(overrides = []) {
     { url: '/api/ota/manifest', body: { detail: null } },
     { url: '/api/settings', body: SETTINGS },
     { url: '/api/calibration', body: CALIBRATION },
+    { url: '/api/ai', body: AI_CONFIG },
   ];
   return overrides.concat(base);
 }
+
+const AI_CONFIG = {
+  config: {
+    vlm_enabled: true, vlm_provider: 'openai', vlm_api_mode: 'responses',
+    vlm_api_url: 'https://example.test/v1', vlm_model: 'qwen-test', vlm_timeout: 600,
+    vlm_proxy: '', anthropic_model: 'claude-test', anthropic_base_url: 'https://api.anthropic.com',
+    text_api: 'openai', text_base_url: 'https://text.example.test/v1', text_model: 'glm-4-flash',
+    image_api: 'signed_async', image_ratio: '4:3',
+    image_api_url: '', image_model: '', weather_host: 'devapi.qweather.com',
+    nas_ssh_host: 'nas.test', nas_ssh_user: 'root', nas_ssh_port: 22,
+    nas_photo_dir: '/volume1/photo', nas_rsync_path: '', nas_rsync_bwlimit: 0,
+    // 密钥一律只回掩码（绝不出现明文）
+    vlm_api_key: 'sk-sU1…MeO7', vlm_api_key_set: true,
+    anthropic_api_key: '', anthropic_api_key_set: false,
+    text_api_key: 'f8d49b…fgOL', text_api_key_set: true,
+    image_api_key: '', image_api_key_set: false,
+    image_signed_ak: 'AKLTZD…xZTk', image_signed_ak_set: true,
+    image_signed_sk: 'WkRrME…RQ==', image_signed_sk_set: true,
+    weather_key: '39d61e…e386', weather_key_set: true,
+  },
+  status: {
+    vlm_provider: 'openai', vlm_ready: true, vlm_disabled: false,
+    text_ready: true, text_model: 'glm-4-flash', text_api: 'openai',
+    image_ready: true, image_api: 'signed_async', image_ratio: '4:3',
+    image_openai_ready: false, image_signed_ready: true,
+    weather_ready: true, nas_ready: true,
+  },
+};
 
 /** assert.include 的等价物（node:assert 无该 API）。 */
 const include = (haystack, needle, msg) =>
@@ -284,6 +313,103 @@ test('照片点选：pick blob 上传与取色 JSON 链路照常', async () => {
   assert.equal(body.x, 0.5);
   assert.equal(body.y, 0.5);
   include(allText(el, 'toast'), '已取色');
+});
+
+test('AI 页：密钥只回掩码，留空不改、"-" 清空，保存只提交编辑过的字段', async () => {
+  const { context, calls, el } = loadPage(bootRoutes());
+  await flush();
+  // 载入：密钥输入框一律留空（页面不回填明文/掩码），旁边提示「已配置：掩码」
+  assert.equal(el('aiVlmKey').value, '', '密钥输入框不应回填任何值');
+  include(lastText(el, 'aiVlmKeySet'), '已配置：sk-sU1…MeO7');
+  include(lastText(el, 'aiTextKeySet'), '已配置：f8d49b…fgOL');
+  include(lastText(el, 'aiAnthKeySet'), '未配置');
+  // 状态条：就绪的组打 ✅，未就绪的组灰掉
+  const status = el('aiStatus')._history.innerHTML.join('');
+  include(status, '✅ VLM 照片分析');
+  include(status, '✅ 文生图');
+  // provider 切换：签名式只显示 AK/SK，不显示 OpenAI 兼容三项
+  assert.equal(el('aiImageSignedFields').style.display, 'flex');
+  assert.equal(el('aiImageOpenaiFields').style.display, 'none');
+  // 非密钥字段照常回填现值
+  assert.equal(el('aiVlmModel').value, 'qwen-test');
+  assert.equal(el('aiNasHost').value, 'nas.test');
+  assert.equal(el('aiVlmEnabled').checked, true);
+  // 保存：不动密钥 → body 里不出现密钥字段（服务端即保持原值）
+  el('aiVlmModel').value = 'qwen-new';
+  await context.saveAiConfig();
+  await flush();
+  const put = calls.filter(c => c.init && c.init.method === 'PUT').pop();
+  const body = JSON.parse(put.init.body);
+  assert.equal(body.vlm_model, 'qwen-new');
+  assert.ok(!('vlm_api_key' in body), '未编辑的密钥字段不应提交（留空 = 不改）');
+  assert.ok(!('text_api_key' in body));
+  // 显式置空：填 "-" 才提交该字段
+  el('aiTextKey').value = '-';
+  el('aiAnthKey').value = 'sk-ant-new';
+  await context.saveAiConfig();
+  await flush();
+  const body2 = JSON.parse(calls.filter(c => c.init && c.init.method === 'PUT').pop().init.body);
+  assert.equal(body2.text_api_key, '-');
+  assert.equal(body2.anthropic_api_key, 'sk-ant-new');
+  include(allText(el, 'toast'), 'AI 配置已保存');
+});
+
+test('AI 页：切换文生图 provider 只显示该链路需要的字段', async () => {
+  const { context, el } = loadPage(bootRoutes());
+  await flush();
+  // fixture 默认 signed_async → 只显示 AK/SK（密钥输入框一律留空，只给掩码提示）
+  assert.equal(el('aiSignedAk').value, '');
+  include(lastText(el, 'aiSignedAkSet'), '已配置：');
+  // 切到 OpenAI 兼容 → 改为显示 URL / 模型 / Key，隐藏 AK/SK
+  el('aiImageApi').value = 'openai';
+  await context.aiImageApiToggle();
+  assert.equal(el('aiImageOpenaiFields').style.display, 'flex');
+  assert.equal(el('aiImageSignedFields').style.display, 'none');
+  // 切回签名式 → 反向
+  el('aiImageApi').value = 'signed_async';
+  await context.aiImageApiToggle();
+  assert.equal(el('aiImageOpenaiFields').style.display, 'none');
+  assert.equal(el('aiImageSignedFields').style.display, 'flex');
+});
+
+test('AI 页：Cloudflare 隔离字段与 token 留空/清空', async () => {
+  const { context, calls, el } = loadPage(bootRoutes());
+  await flush();
+  el('aiImageApi').value = 'cloudflare';
+  context.aiImageApiToggle();
+  assert.equal(el('aiImageCloudflareFields').style.display, 'flex');
+  assert.equal(el('aiGenRatio').disabled, true);
+  assert.equal(el('aiImageOpenaiFields').style.display, 'none');
+  assert.equal(el('aiImageSignedFields').style.display, 'none');
+  assert.equal(el('aiCloudflareToken').value, '');
+  el('aiCloudflareAccount').value = 'a'.repeat(32);
+  await context.saveAiConfig();
+  await flush();
+  let body = JSON.parse(calls.filter(c => c.init?.method === 'PUT').pop().init.body);
+  assert.equal(body.image_api, 'cloudflare');
+  assert.equal(body.cloudflare_account_id, 'a'.repeat(32));
+  assert.ok(!('cloudflare_api_token' in body));
+  el('aiCloudflareToken').value = '-';
+  await context.saveAiConfig();
+  await flush();
+  body = JSON.parse(calls.filter(c => c.init?.method === 'PUT').pop().init.body);
+  assert.equal(body.cloudflare_api_token, '-');
+  assert.equal(el('aiCloudflareToken').value, '');
+  const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
+  assert.match(html, /type="password" id="aiCloudflareToken"/);
+});
+
+test('AI 页：测试连接把服务端结果渲染成成功/失败提示', async () => {
+  const { context, el } = loadPage(bootRoutes([
+    { url: '/api/ai/test', body: { ok: true, detail: 'OpenAICompatClient 响应正常', sample: '一张白纸', elapsed_ms: 812 } },
+  ]));
+  await flush();
+  await context.testAi('vlm');
+  await flush();
+  const html = el('aiVlmTest')._history.innerHTML.join('');
+  include(html, '✅');
+  include(html, '一张白纸');
+  include(html, '812ms');
 });
 
 test('人眼匹配保存与天气城市查询迁移照常', async () => {

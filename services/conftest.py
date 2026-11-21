@@ -30,6 +30,19 @@ os.environ["FRAMEDPHOTO_TEST_CONFIG"] = os.path.join(_tmp, "runtime_config.json"
 # （上传自动分析 / 每日精选文案）会真实调用外部 API——慢、花钱且不确定。
 # 需要 VLM 的用例（test_ai_features）均自行 monkeypatch settings，不受影响。
 os.environ["VLM_ENABLED"] = "false"
+# 同理关掉文本 LLM / 文生图：日历寄语与自由模块会读真实 key，否则渲染类
+# 测试（render_month → daily_quote）会打外部 API，把真实结果写进当天缓存，
+# 让后续断言「寄语来自内置语料」的用例失败（曾真实发生）。
+os.environ["TEXT_API_KEY"] = ""
+os.environ["ZHIPU_API_KEY"] = ""       # 旧键兼容路径同样要按住
+os.environ["IMAGE_API_KEY"] = ""
+os.environ["IMAGE_SIGNED_AK"] = ""
+os.environ["IMAGE_SIGNED_SK"] = ""
+os.environ["JIMENG_ACCESS_KEY"] = ""    # 旧键兼容路径
+os.environ["JIMENG_SECRET_KEY"] = ""
+os.environ["IMAGEGEN_KEY"] = ""
+os.environ["CLOUDFLARE_ACCOUNT_ID"] = ""
+os.environ["CLOUDFLARE_API_TOKEN"] = ""
 # 校准 profile 同样隔离，避免测试调用 save_calibrated 覆盖真实校准数据
 os.environ["FRAMEDPHOTO_CALIBRATED_PROFILE"] = os.path.join(_tmp, "calibrated.json")
 

@@ -29,6 +29,31 @@ if [ -f "$ENV_FILE" ]; then
   set -a; source "$ENV_FILE"; set +a
 fi
 
+# 管理台「AI 模型」页写入的 NAS 接入覆盖（runtime_config.json）优先于 .env：
+# 否则页面改了主机/用户/目录，定时同步仍用旧值，两边不一致。
+# 只接管运行时可配置的键；键缺失/空值/类型不对则保留 .env 的值。
+RUNTIME_CFG="services/app/runtime_config.json"
+if [ -f "$RUNTIME_CFG" ]; then
+  RT_ENV="$(mktemp -t framedphoto-nasenv.XXXXXX)"
+  /usr/bin/python3 - "$RUNTIME_CFG" > "$RT_ENV" <<'PY'
+import json, shlex, sys
+rc = json.load(open(sys.argv[1], encoding="utf-8"))
+for key, env in (("nas_ssh_host", "NAS_SSH_HOST"), ("nas_ssh_user", "NAS_SSH_USER"),
+                 ("nas_photo_dir", "NAS_PHOTO_DIR"), ("nas_rsync_path", "NAS_RSYNC_PATH")):
+    val = rc.get(key)
+    if isinstance(val, str) and val.strip():
+        print(f"{env}={shlex.quote(val.strip())}")
+for key, env in (("nas_ssh_port", "NAS_SSH_PORT"), ("nas_rsync_bwlimit", "NAS_RSYNC_BWLIMIT")):
+    val = rc.get(key)
+    if isinstance(val, bool):
+        continue
+    if isinstance(val, (int, float)) or (isinstance(val, str) and val.strip().isdigit()):
+        print(f"{env}={int(val)}")
+PY
+  set -a; source "$RT_ENV"; set +a
+  rm -f "$RT_ENV"
+fi
+
 : "${NAS_SSH_HOST:?需要 NAS_SSH_HOST（IPv6 地址或域名）}"
 : "${NAS_SSH_USER:?需要 NAS_SSH_USER}"
 NAS_SSH_PORT="${NAS_SSH_PORT:-22}"
